@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rivyou-shopify-discovery"
+version = "0.1.0"
+description = "Evidence-based enrichment pipeline for Indian Shopify stores"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "httpx>=0.27,<1",
+  "lxml>=5,<7",
+  "pandas>=2.1,<4",
+  "phonenumbers>=8.13,<10",
+  "pydantic>=2.6,<3",
+  "tenacity>=8.2,<10",
+  "tldextract>=5.1,<6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
