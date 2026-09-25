@@ -1,3 +1,5 @@
+import pytest
+
 from conftest import make_page
 from rivyou.extract.socials import extract_socials, normalize_social_url
 
@@ -24,3 +26,7 @@ def test_rejects_shopify_platform_account():
 def test_normalizes_twitter_to_x():
     assert normalize_social_url("https://twitter.com/mybrand/") == ("twitter", "https://x.com/mybrand")
 
+
+@pytest.mark.parametrize("url", ["https://facebook.com/settings", "https://facebook.com/sharBtwkjMWNZ"])
+def test_rejects_generic_and_short_share_facebook_paths(url):
+    assert normalize_social_url(url) is None

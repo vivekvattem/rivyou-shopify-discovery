@@ -14,6 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rivyou.extract.logo import REJECT_LOGO_RE  # noqa: E402
+from rivyou.config import INDIA_SCORE_THRESHOLD, SHOPIFY_SCORE_THRESHOLD  # noqa: E402
+from rivyou.submission import SHARE_URL_RE  # noqa: E402
 from rivyou.utils.domains import normalize_domain, registered_domain  # noqa: E402
 
 
@@ -43,13 +45,34 @@ def validate(path: str | Path) -> int:
     invalid_domains = [value for value in domains if not normalize_domain(value)]
     logos = frame.get("logo_url", pd.Series(dtype=str))
     invalid_logos = [value for value in logos if value and (value.lower().endswith("favicon.ico") or REJECT_LOGO_RE.search(value))]
+    malformed_json = duplicate_contacts = share_urls = invalid_scores = 0
+    missing_all_contacts = 0
+    for _, row in frame.iterrows():
+        try:
+            contacts_value = json.loads(row.get("contacts", ""))
+            socials_value = json.loads(row.get("socials", ""))
+            emails = contacts_value.get("emails", [])
+            phones = contacts_value.get("phones", [])
+            missing_all_contacts += int(not emails and not phones)
+            duplicate_contacts += int(len(emails) != len(set(emails)) or len(phones) != len(set(phones)))
+            share_urls += sum(bool(url and SHARE_URL_RE.search(url)) for url in socials_value.values())
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            malformed_json += 1
+        if "shopify_score" in frame.columns and "india_score" in frame.columns:
+            try:
+                invalid_scores += int(
+                    int(row["shopify_score"]) < SHOPIFY_SCORE_THRESHOLD or int(row["india_score"]) < INDIA_SCORE_THRESHOLD
+                )
+            except (TypeError, ValueError):
+                invalid_scores += 1
 
-    print(f"total accepted stores: {total}")
+    print(f"TOTAL STORES: {total}")
     print(f"duplicate domains: {duplicate_count}")
     contacts = frame.get("contacts", pd.Series([""] * total))
     socials = frame.get("socials", pd.Series([""] * total))
     print(f"missing emails: {percentage(missing_json_field(contacts, 'emails'), total)}")
     print(f"missing phones: {percentage(missing_json_field(contacts, 'phones'), total)}")
+    print(f"missing contacts: {percentage(missing_all_contacts, total)}")
     print(f"missing socials: {percentage(missing_json_field(socials), total)}")
     for column, label in (
         ("category", "category"), ("tagline_or_description", "description"), ("logo_url", "logo"), ("state", "state")
@@ -61,7 +84,11 @@ def validate(path: str | Path) -> int:
         print(f"{label} confidence distribution: {distribution}")
     print(f"invalid domain URLs: {len(invalid_domains)}")
     print(f"forbidden favicon/icon logo URLs: {len(invalid_logos)}")
-    valid = not duplicate_count and not invalid_domains and not invalid_logos
+    print(f"malformed JSON-in-CSV rows: {malformed_json}")
+    print(f"rows with duplicate contacts: {duplicate_contacts}")
+    print(f"social share URLs: {share_urls}")
+    print(f"rows below verification thresholds: {invalid_scores}")
+    valid = not any((duplicate_count, invalid_domains, invalid_logos, malformed_json, duplicate_contacts, share_urls, invalid_scores))
     print(f"validation: {'PASS' if valid else 'FAIL'}")
     return 0 if valid else 1
 

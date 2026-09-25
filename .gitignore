@@ -7,5 +7,14 @@ __pycache__/
 data/output/*.csv
 data/output/*.json
 data/intermediate/*.json
+data/state/*.db
+data/state/*.db-*
+data/cache/*
+data/audits/*.csv
+data/audits/*.json
+data/discovery/generated_queries.csv
+!data/cache/.gitkeep
+!data/state/.gitkeep
+!data/audits/.gitkeep
 !data/output/.gitkeep
 !data/intermediate/.gitkeep

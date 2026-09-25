@@ -14,13 +14,23 @@ def test_rejects_example_and_image_emails():
 
 
 def test_extracts_and_normalizes_indian_phone():
-    _, phones = extract_contacts([make_page('<a href="tel:+919876543210">Call</a>')])
-    assert phones == ["+919876543210"]
+    _, phones = extract_contacts([make_page('<a href="tel:+919123456789">Call</a>')])
+    assert phones == ["+919123456789"]
 
 
 def test_extracts_json_ld_contacts():
-    html = '<script type="application/ld+json">{"@type":"Organization","email":"care@brand.in","telephone":"+91 98765 43210"}</script>'
+    html = '<script type="application/ld+json">{"@type":"Organization","email":"care@brand.in","telephone":"+91 91234 56789"}</script>'
     emails, phones = extract_contacts([make_page(html)])
     assert emails == ["care@brand.in"]
-    assert phones == ["+919876543210"]
+    assert phones == ["+919123456789"]
 
+
+def test_rejects_real_world_placeholder_contacts():
+    emails, phones = extract_contacts([make_page("contact@yourbrand.com +91 98765 43210")])
+    assert emails == []
+    assert phones == []
+
+
+def test_rejects_platform_noreply_email():
+    emails, _ = extract_contacts([make_page("noreply@shopify.com")])
+    assert emails == []

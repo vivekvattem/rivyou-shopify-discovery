@@ -10,7 +10,7 @@ import tldextract
 
 _MARKDOWN_LINK = re.compile(r"^\s*\[[^]]+\]\(([^)]+)\)\s*$")
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.I)
-_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+_EXTRACT = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
 
 def normalize_domain(value: str | None) -> str | None:

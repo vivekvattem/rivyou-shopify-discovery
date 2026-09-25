@@ -21,7 +21,7 @@ CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Electronics", ("electronics", "gadgets", "charger", "headphones", "smartphone")),
     ("Health & Wellness", ("wellness", "supplement", "ayurveda", "nutrition", "health")),
     ("Sports & Fitness", ("fitness", "sports", "gym", "yoga mat", "activewear")),
-    ("Kids & Baby", ("baby", "kids", "children", "toys", "infant")),
+    ("Kids & Baby", ("baby", "kids", "kidswear", "childrenswear", "children", "little rani", "toys", "infant")),
     ("Pet Supplies", ("pet supplies", "dog", "cat food", "pet care")),
     ("Stationery", ("stationery", "notebook", "journal", "planner", "pens")),
     ("Fashion", ("fashion", "clothing", "apparel", "ethnic wear")),
@@ -29,13 +29,18 @@ CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def classify_category(pages: Iterable[CrawledPage], description: str | None = None) -> str:
-    texts = [description or ""]
+    weighted_texts = [((description or "").lower(), 3)]
     for page in pages:
         if not page.html:
             continue
         soup = BeautifulSoup(page.html, "lxml")
-        texts.append(" ".join(tag.get_text(" ", strip=True) for tag in soup.select("title, h1, nav, [class*='collection']")[:30]))
-    haystack = " ".join(texts).lower()
-    scores = [(sum(haystack.count(word) for word in words), category) for category, words in CATEGORY_RULES]
+        headline = " ".join(tag.get_text(" ", strip=True) for tag in soup.select("title, h1")[:8]).lower()
+        navigation = " ".join(tag.get_text(" ", strip=True) for tag in soup.select("nav, [class*='collection']")[:30]).lower()
+        weighted_texts.extend(((headline, 4), (navigation, 1)))
+    scores = [
+        (sum(text.count(word) * weight * (2 if " " in word else 1)
+             for text, weight in weighted_texts for word in words), category)
+        for category, words in CATEGORY_RULES
+    ]
     score, category = max(scores, default=(0, "Other"), key=lambda item: item[0])
     return category if score else "Other"

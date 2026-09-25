@@ -14,6 +14,8 @@ from rivyou.utils.text import iter_json_ld, visible_text
 EMAIL_RE = re.compile(r"(?<![\w.+-])([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?![\w.-])", re.I)
 JUNK_EMAIL_LOCAL = re.compile(r"^(?:example|test|testing|sample|email|yourname|name|user)$", re.I)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+JUNK_EMAIL_DOMAINS = {"example.com", "example.org", "test.com", "yourbrand.com", "shopify.com", "myshopify.com"}
+JUNK_PHONE_NUMBERS = {"+911234567890", "+919876543210", "+910000000000", "+919999999999"}
 
 
 def normalize_email(value: str) -> str | None:
@@ -21,7 +23,9 @@ def normalize_email(value: str) -> str | None:
     if not EMAIL_RE.fullmatch(email):
         return None
     local, domain = email.rsplit("@", 1)
-    if JUNK_EMAIL_LOCAL.match(local) or domain in {"example.com", "example.org", "test.com"}:
+    if JUNK_EMAIL_LOCAL.match(local) or local in {"noreply", "no-reply", "donotreply", "do-not-reply"}:
+        return None
+    if domain in JUNK_EMAIL_DOMAINS or domain.endswith(".myshopify.com"):
         return None
     if email.endswith(IMAGE_EXTENSIONS) or ".." in email:
         return None
@@ -49,7 +53,8 @@ def _normalize_phone(value: str) -> str | None:
         return None
     if not phonenumbers.is_possible_number(number) or not phonenumbers.is_valid_number(number):
         return None
-    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+    normalized = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+    return None if normalized in JUNK_PHONE_NUMBERS else normalized
 
 
 def extract_contacts(pages: Iterable[CrawledPage]) -> tuple[list[str], list[str]]:
@@ -76,6 +81,7 @@ def extract_contacts(pages: Iterable[CrawledPage]) -> tuple[list[str], list[str]
                 phone_values.add(normalized)
         for match in phonenumbers.PhoneNumberMatcher(text, "IN"):
             if phonenumbers.is_valid_number(match.number):
-                phone_values.add(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.E164))
+                normalized = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.E164)
+                if normalized not in JUNK_PHONE_NUMBERS:
+                    phone_values.add(normalized)
     return sorted(email_values), sorted(phone_values)
-

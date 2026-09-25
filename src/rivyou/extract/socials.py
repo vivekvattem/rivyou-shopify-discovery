@@ -40,6 +40,11 @@ def normalize_social_url(raw_url: str, base_url: str = "") -> tuple[str, str] | 
     lowered = path.lower()
     if "shopify" in lowered or lowered.startswith(("/hashtag/", "/search")):
         return None
+    if platform == "facebook" and (
+        lowered in {"/settings", "/help", "/privacy", "/login", "/marketplace"}
+        or lowered.startswith("/shar")
+    ):
+        return None
     if platform == "twitter" and lowered.startswith(("/intent", "/share", "/home")):
         return None
     if platform == "linkedin" and not lowered.startswith(("/company/", "/in/", "/school/")):

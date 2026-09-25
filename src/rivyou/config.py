@@ -31,7 +31,12 @@ class Settings:
     shopify_score_threshold: int = _env_int("SHOPIFY_SCORE_THRESHOLD", 4)
     india_score_threshold: int = _env_int("INDIA_SCORE_THRESHOLD", 4)
     retry_count: int = _env_int("RETRY_COUNT", 3)
+    max_candidate_attempts: int = _env_int("MAX_CANDIDATE_ATTEMPTS", 3)
     max_response_bytes: int = _env_int("MAX_RESPONSE_BYTES", 5_000_000)
+    per_host_delay_seconds: float = _env_float("PER_HOST_DELAY_SECONDS", 1.0)
+    cache_ttl_hours: float = _env_float("CACHE_TTL_HOURS", 24.0)
+    prefilter_score_threshold: int = _env_int("PREFILTER_SCORE_THRESHOLD", 2)
+    database_path: str = os.getenv("DATABASE_PATH", "data/state/rivyou.db")
 
     def with_overrides(self, **values: object) -> "Settings":
         return replace(self, **values)
@@ -47,4 +52,6 @@ USER_AGENT = SETTINGS.user_agent
 SHOPIFY_SCORE_THRESHOLD = SETTINGS.shopify_score_threshold
 INDIA_SCORE_THRESHOLD = SETTINGS.india_score_threshold
 RETRY_COUNT = SETTINGS.retry_count
-
+MAX_CANDIDATE_ATTEMPTS = SETTINGS.max_candidate_attempts
+PER_HOST_DELAY_SECONDS = SETTINGS.per_host_delay_seconds
+CACHE_TTL_HOURS = SETTINGS.cache_ttl_hours
