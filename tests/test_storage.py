@@ -127,3 +127,4 @@ def test_pipeline_run_persists_wave_funnel_and_scores(tmp_path):
     assert row["prefilter_passed_count"] == 8
     assert row["shopify_verified_count"] == 6
     assert row["average_india_score"] == 5.5
+    assert row["acceptance_percentage"] == 40.0

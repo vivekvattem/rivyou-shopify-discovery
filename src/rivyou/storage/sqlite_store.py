@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     total_seconds REAL NOT NULL DEFAULT 0,
     domains_per_minute REAL NOT NULL DEFAULT 0,
     accepted_per_minute REAL NOT NULL DEFAULT 0,
+    acceptance_percentage REAL NOT NULL DEFAULT 0,
     metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -176,6 +177,7 @@ class SQLiteStore:
                 "total_seconds": "REAL NOT NULL DEFAULT 0",
                 "domains_per_minute": "REAL NOT NULL DEFAULT 0",
                 "accepted_per_minute": "REAL NOT NULL DEFAULT 0",
+                "acceptance_percentage": "REAL NOT NULL DEFAULT 0",
             })
             self._ensure_columns(connection, "candidates", {"retry_reason": "TEXT"})
             self._ensure_columns(connection, "candidate_provenance", {"location": "TEXT NOT NULL DEFAULT ''"})
@@ -368,14 +370,15 @@ class SQLiteStore:
                    rejected_shopify_count = ?, rejected_india_count = ?, retry_count = ?, failed_count = ?,
                    average_shopify_score = ?, average_india_score = ?,
                    discovery_seconds = ?, verification_seconds = ?, total_seconds = ?,
-                   domains_per_minute = ?, accepted_per_minute = ? WHERE id = ?""",
+                   domains_per_minute = ?, accepted_per_minute = ?, acceptance_percentage = ? WHERE id = ?""",
                 (_now(), processed, accepted,
                  funnel.get("prefilter_passed", 0), funnel.get("shopify_verified", 0),
                  funnel.get("india_verified", accepted), funnel.get("rejected_shopify", 0),
                  funnel.get("rejected_india", 0), funnel.get("retry", 0), funnel.get("failed", 0),
                  funnel.get("average_shopify_score"), funnel.get("average_india_score"),
                  discovery_seconds, verification_seconds, total_seconds,
-                 processed / minutes if minutes else 0.0, accepted / minutes if minutes else 0.0, run_id),
+                 processed / minutes if minutes else 0.0, accepted / minutes if minutes else 0.0,
+                 100 * accepted / processed if processed else 0.0, run_id),
             )
 
     def latest_runs(self, limit: int = 20) -> list[dict[str, Any]]:
