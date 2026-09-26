@@ -18,6 +18,7 @@ data/audits/*.csv
 data/audits/*.json
 !data/audits/auto_audit_20260926T163940Z.csv
 !data/audits/targeted_accepted_audit_20260926T171858Z.csv
+!data/audits/targeted_accepted_audit_20260926T174909Z_suggested.csv
 !data/audits/missing_fields.csv
 data/discovery/generated_queries.csv
 !data/cache/.gitkeep
