@@ -195,6 +195,10 @@ class SQLiteStore:
                    ELSE 'OTHER_TRANSIENT' END
                    WHERE status='RETRY' AND (retry_reason IS NULL OR retry_reason='')"""
             )
+            connection.execute(
+                """UPDATE pipeline_runs SET acceptance_percentage = 100.0 * accepted_count / processed_count
+                   WHERE processed_count > 0 AND accepted_count > 0 AND acceptance_percentage = 0"""
+            )
 
     @staticmethod
     def _ensure_columns(connection: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -473,12 +477,16 @@ class SQLiteStore:
     def query_family_stats(self) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute(
-                """SELECT p.source, p.signal, p.location, COUNT(DISTINCT p.candidate_id) candidates,
+                """SELECT p.source, p.signal,
+                   CASE WHEN p.location != '' THEN p.location ELSE p.discovery_query END location,
+                   COUNT(DISTINCT p.candidate_id) candidates,
                    COUNT(DISTINCT CASE WHEN c.status='ACCEPTED' THEN p.candidate_id END) accepted,
                    COUNT(DISTINCT CASE WHEN c.status='REJECTED_SHOPIFY' THEN p.candidate_id END) rejected_shopify,
                    COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india
                    FROM candidate_provenance p JOIN candidates c ON c.id=p.candidate_id
-                   GROUP BY p.source, p.signal, p.location ORDER BY candidates DESC"""
+                   GROUP BY p.source, p.signal,
+                     CASE WHEN p.location != '' THEN p.location ELSE p.discovery_query END
+                   ORDER BY candidates DESC"""
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -486,7 +494,8 @@ class SQLiteStore:
         with self.connection() as connection:
             rows = connection.execute(
                 """SELECT COALESCE(retry_reason, 'UNCLASSIFIED') reason, COUNT(*) count
-                   FROM candidates WHERE status='RETRY' GROUP BY reason ORDER BY count DESC"""
+                   FROM candidates WHERE retry_reason IS NOT NULL AND retry_reason != ''
+                   GROUP BY reason ORDER BY count DESC"""
             ).fetchall()
         return {row["reason"]: row["count"] for row in rows}
 

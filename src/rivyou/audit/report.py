@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import re
 from typing import Any
 
 from rivyou.models import CandidateStatus
@@ -29,8 +30,12 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
     sources = store.source_stats()
     query_families = []
     for row in store.query_family_stats():
-        family = "/".join(filter(None, (row["source"], row["signal"], row["location"])))
-        query_families.append(with_rates({**row, "query_family": family or row["source"]}))
+        location = row["location"]
+        if location and '"' in location:
+            quoted = [value for value in re.findall(r'"([^"]+)"', location) if value != row["signal"]]
+            location = quoted[0] if quoted else location
+        family = "/".join(filter(None, (row["source"], row["signal"], location)))
+        query_families.append(with_rates({**row, "location": location, "query_family": family or row["source"]}))
     return {
         "total_candidates": sum(counts.values()),
         "status_counts": {status.value: counts.get(status.value, 0) for status in CandidateStatus},

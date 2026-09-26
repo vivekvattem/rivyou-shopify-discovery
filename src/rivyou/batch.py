@@ -65,6 +65,18 @@ class BatchRunner:
         self.settings = settings
         self.use_cache = use_cache
 
+    def _record_retryable_failure(
+        self, candidate: CandidateRecord, error: str, *, evidence: dict | None = None
+    ) -> CandidateStatus:
+        """Retry within the candidate budget, then stop as FAILED without calling it a verifier rejection."""
+        exhausted = candidate.attempt_count + 1 >= self.settings.max_candidate_attempts
+        status = CandidateStatus.FAILED if exhausted else CandidateStatus.RETRY
+        self.store.transition(
+            candidate.normalized_domain, status, error=error,
+            retry_reason=normalize_retry_reason(error), evidence=evidence,
+        )
+        return status
+
     async def run(
         self,
         statuses: list[CandidateStatus],
@@ -105,18 +117,12 @@ class BatchRunner:
                 for candidate, check in zip(processing, checks):
                     if isinstance(check, Exception):
                         error = str(check)
-                        self.store.transition(
-                            candidate.normalized_domain, CandidateStatus.RETRY, error=error,
-                            retry_reason=normalize_retry_reason(error),
-                        )
-                        counts["retry"] += 1
+                        status = self._record_retryable_failure(candidate, error)
+                        counts["failed" if status == CandidateStatus.FAILED else "retry"] += 1
                     elif check.error:
                         self.store.set_prefilter(candidate.normalized_domain, check.model_dump(mode="json"))
-                        self.store.transition(
-                            candidate.normalized_domain, CandidateStatus.RETRY, error=check.error,
-                            retry_reason=normalize_retry_reason(check.error),
-                        )
-                        counts["retry"] += 1
+                        status = self._record_retryable_failure(candidate, check.error)
+                        counts["failed" if status == CandidateStatus.FAILED else "retry"] += 1
                     elif not check.plausible:
                         shopify_scores.append(check.score)
                         payload = check.model_dump(mode="json")
@@ -179,11 +185,8 @@ class BatchRunner:
                             counts["rejected_india"] += 1
                         else:
                             error = debug.get("rejection_reason", "Transient pipeline failure")
-                            self.store.transition(
-                                candidate.normalized_domain, CandidateStatus.RETRY,
-                                error=error, retry_reason=normalize_retry_reason(error), evidence=debug,
-                            )
-                            counts["retry"] += 1
+                            status = self._record_retryable_failure(candidate, error, evidence=debug)
+                            counts["failed" if status == CandidateStatus.FAILED else "retry"] += 1
         except Exception as exc:
             LOGGER.exception("[BATCH] run failed")
             for candidate in processing:

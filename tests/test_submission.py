@@ -29,7 +29,11 @@ def make_project(tmp_path, row_overrides=None, json_override=None):
         writer = csv.DictWriter(handle, fieldnames=row.keys())
         writer.writeheader()
         writer.writerow(row)
-    payload = json_override if json_override is not None else [{"domain_url": row["domain_url"]}]
+    payload = json_override if json_override is not None else [
+        {field: row[field] for field in (
+            "domain_url", "contacts", "socials", "category", "tagline_or_description", "logo_url", "state"
+        )}
+    ]
     (tmp_path / "data/output/indian_shopify_stores.json").write_text(json.dumps(payload))
     return tmp_path
 
@@ -70,3 +74,13 @@ def test_submission_checker_rejects_bad_social_and_duplicate_contacts(tmp_path):
 def test_submission_checker_rejects_malformed_json_fields(tmp_path):
     results = check_submission(make_project(tmp_path, {"contacts": "not-json"}), minimum_rows=1)
     assert not by_name(results, "JSON-in-CSV fields").passed
+
+
+def test_submission_checker_rejects_social_platform_homepage(tmp_path):
+    root = make_project(tmp_path, {"socials": json.dumps({"instagram": "https://instagram.com/"})})
+    assert not by_name(check_submission(root, minimum_rows=1), "Social profile URLs").passed
+
+
+def test_submission_checker_requires_public_fields_in_json(tmp_path):
+    root = make_project(tmp_path, json_override=[{"domain_url": "https://brand.in"}])
+    assert not by_name(check_submission(root, minimum_rows=1), "JSON required fields").passed

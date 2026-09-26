@@ -281,26 +281,28 @@ The first controlled batch processed the highest-priority 25 candidates:
 | Processing throughput | 23.67 domains/minute |
 | Acceptance throughput | 17.05 stores/minute |
 
-Inspection found and fixed four concrete extraction/verification defects: placeholder merchant contacts, generic/share Facebook URLs, weak kidswear category weighting, and address PIN selection when an unrelated six-digit number appeared earlier in the page. Reprocessing the three India-rejected records after that conservative address-context fix accepted one additional store; two remained rejected. The current pilot export contains 19 unique accepted stores. This is a pilot dataset, not the final 1,000-store submission.
+Inspection found and fixed four concrete extraction/verification defects: placeholder merchant contacts, generic/share Facebook URLs, weak kidswear category weighting, and address PIN selection when an unrelated six-digit number appeared earlier in the page. Reprocessing the three India-rejected records after that conservative address-context fix accepted one additional store; two remained rejected. Completing the eight remaining NEW candidates accepted five more. The current pilot export contains 24 unique accepted stores; one candidate is rejected as non-Shopify, two are rejected by India verification, and six are `FAILED` after repeatedly honoring explicit `robots.txt` blocks. There are no NEW or RETRY candidates left. This is a pilot dataset, not the final 1,000-store submission.
+
+The observed failure patterns, generic fixes, and anonymized/static regression coverage are recorded in `DEVELOPMENT_NOTES.md`. No Phase 4 extractor rule was changed without a completed human rating.
 
 Current accepted-record completeness after those fixes:
 
 | Field | Missing |
 |---|---:|
 | Email | 0.0% |
-| Phone | 10.5% |
+| Phone | 8.3% |
 | Any contact | 0.0% |
-| Social profile | 31.6% |
+| Social profile | 29.2% |
 | Category | 0.0% |
 | Description | 0.0% |
-| Logo | 5.3% |
-| State | 10.5% |
+| Logo | 4.2% |
+| State | 20.8% |
 
-The missing-field rows are reproducibly listed in `data/audits/missing_fields.csv`. Socials were most often missing because no qualifying merchant-profile anchor appeared in the fetched static pages; share/settings URLs were deliberately discarded. Two stores exposed no validated phone in the bounded pages. One store had no image that passed the non-favicon logo rules. Two stores provided enough independent India evidence to pass, but no sufficiently contextual business state; the system retains `Unknown` rather than copying a customer, stockist, or shipping location.
+The missing-field rows are reproducibly listed in `data/audits/missing_fields.csv`, and `data/output/missing_fields.md` is generated directly from the export. Seven stores have no qualifying social-profile anchor in the fetched static pages; share/settings URLs are deliberately discarded. Two stores expose no validated phone in the bounded pages. One store has no image that passes the non-favicon logo rules. Five stores provide enough independent India evidence to pass, but no sufficiently contextual business state; the system retains an empty value rather than copying a customer, stockist, or shipping location. These are observed missing-value conditions, not claims that the merchants publish no such data elsewhere.
 
 Manual precision remains **not yet measured** because the generated worksheet's manual correctness cells are intentionally blank. No Shopify, India, logo, or state precision percentage is claimed until a reviewer fills those cells and runs `evaluate_audit.py`.
 
-The three current `RETRY` records were inspected: all were blocked by `robots.txt`. They are reported as `ROBOTS_BLOCKED`, not described as timeouts or server failures, and the crawler does not bypass those directives.
+The original three `RETRY` records and three further unprocessed candidates were inspected through bounded attempts: all six were blocked by `robots.txt`. They are retained as `FAILED` with `ROBOTS_BLOCKED` reason after the attempt budget, not described as timeouts or server failures, and the crawler does not bypass those directives.
 
 ## Extraction methodology and taxonomy
 

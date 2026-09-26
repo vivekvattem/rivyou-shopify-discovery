@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from rivyou.config import INDIA_SCORE_THRESHOLD, SHOPIFY_SCORE_THRESHOLD
 from rivyou.extract.logo import REJECT_LOGO_RE
@@ -21,6 +22,13 @@ README_MARKERS = (
     "observed", "runtime", "10x", "100x", "more time",
 )
 SHARE_URL_RE = re.compile(r"/(?:share|sharer|intent|sharearticle|dialog/share)(?:/|\?|$)", re.I)
+SOCIAL_HOSTS = {
+    "instagram": ("instagram.com",),
+    "facebook": ("facebook.com", "fb.com"),
+    "twitter": ("twitter.com", "x.com"),
+    "linkedin": ("linkedin.com",),
+    "youtube": ("youtube.com", "youtu.be"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +87,22 @@ def check_submission(project_root: str | Path, minimum_rows: int = 1000) -> list
             emails = contacts.get("emails", [])
             phones = contacts.get("phones", [])
             duplicate_contacts += int(len(emails) != len(set(emails)) or len(phones) != len(set(phones)))
-            bad_socials += sum(bool(url and SHARE_URL_RE.search(url)) for url in socials.values())
+            for platform, url in socials.items():
+                if not url:
+                    continue
+                parsed = urlsplit(url)
+                host = (parsed.hostname or "").lower().removeprefix("www.")
+                path = parsed.path.strip("/").lower()
+                expected_hosts = SOCIAL_HOSTS.get(platform, ())
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not expected_hosts
+                    or not any(host == item or host.endswith(f".{item}") for item in expected_hosts)
+                    or not path
+                    or path in {"login", "settings", "share", "intent"}
+                    or SHARE_URL_RE.search(url)
+                ):
+                    bad_socials += 1
         except (json.JSONDecodeError, TypeError, AttributeError):
             malformed_json += 1
     results.append(CheckResult("JSON-in-CSV fields", malformed_json == 0, f"{malformed_json} malformed rows"))
@@ -100,9 +123,15 @@ def check_submission(project_root: str | Path, minimum_rows: int = 1000) -> list
             payload = json.loads(json_path.read_text(encoding="utf-8"))
             valid_json = isinstance(payload, list) and len(payload) == len(rows)
             detail = f"{len(payload) if isinstance(payload, list) else 'non-list'} JSON rows"
+            missing_json_fields = sum(
+                1 for item in payload if not isinstance(item, dict) or any(field not in item for field in REQUIRED_COLUMNS)
+            ) if isinstance(payload, list) else 1
         except (json.JSONDecodeError, OSError) as exc:
-            valid_json, detail = False, str(exc)
+            valid_json, detail, missing_json_fields = False, str(exc), 1
         results.append(CheckResult("JSON matches CSV", valid_json, detail))
+        results.append(CheckResult(
+            "JSON required fields", missing_json_fields == 0, f"{missing_json_fields} incomplete rows"
+        ))
     return results
 
 
@@ -111,4 +140,3 @@ def render_checks(results: list[CheckResult]) -> str:
     lines.append("")
     lines.append(f"FINAL STATUS: {'READY' if results and all(item.passed for item in results) else 'NOT READY'}")
     return "\n".join(lines)
-
