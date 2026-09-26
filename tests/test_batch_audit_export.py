@@ -111,6 +111,17 @@ def test_report_contains_funnel_and_source_rates(tmp_path):
     assert report["retry_reason_counts"] == {}
 
 
+def test_report_usable_records_matches_registered_domain_deduplication(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save_store_result("https://brand.in", StoreRecord(
+        domain_url="https://brand.in", shopify_score=5, india_score=7
+    ))
+    store.save_store_result("https://shop.brand.in", StoreRecord(
+        domain_url="https://shop.brand.in", shopify_score=8, india_score=9
+    ))
+    assert build_report(store)["acceptance_funnel"]["usable_final_records"] == 1
+
+
 @pytest.mark.parametrize("error,expected", [
     ("HTTP 429", "HTTP_429"),
     ("RetryableHTTPError: HTTP 503", "HTTP_5XX"),

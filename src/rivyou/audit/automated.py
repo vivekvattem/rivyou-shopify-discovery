@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import re
@@ -38,7 +39,7 @@ MANUAL_COLUMNS = (
     "manual_state_correct", "manual_contacts_correct", "manual_notes",
 )
 AUTO_AUDIT_COLUMNS = (
-    "domain", "pipeline_status", "shopify_score", "india_score", "category", "state", "logo_url",
+    "domain", "pipeline_status", "shopify_score", "india_score", "category", "tagline_or_description", "state", "logo_url",
     "emails", "phones", "socials", "shopify_evidence", "india_evidence",
     "auto_shopify_check", "auto_india_check", "auto_logo_check", "auto_state_check",
     "auto_contacts_check", "auto_socials_check", "auto_audit_confidence", "auto_audit_notes",
@@ -239,6 +240,7 @@ def audit_record(record: StoreRecord, pages: list[CrawledPage]) -> dict[str, obj
         "shopify_score": record.shopify_score,
         "india_score": record.india_score,
         "category": record.category or "",
+        "tagline_or_description": record.tagline_or_description or "",
         "state": record.state or "",
         "logo_url": record.logo_url or "",
         "emails": json.dumps(record.emails, ensure_ascii=False),
@@ -262,11 +264,12 @@ async def run_auto_audit(
 ) -> AutoAuditSummary:
     records = store.accepted_records()
     cache = SQLiteHTTPCache(store, settings.cache_ttl_hours)
-    rows: list[dict[str, object]] = []
     async with AsyncCrawler(settings, cache=cache, use_cache=use_cache) as crawler:
-        for record in records:
+        async def audit_one(record: StoreRecord) -> dict[str, object]:
             pages = await crawler.crawl_store(record.domain_url)
-            rows.append(audit_record(record, pages))
+            return audit_record(record, pages)
+
+        rows = list(await asyncio.gather(*(audit_one(record) for record in records)))
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

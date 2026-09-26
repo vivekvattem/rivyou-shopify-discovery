@@ -61,6 +61,14 @@ def test_submission_checker_rejects_favicon_and_weak_scores(tmp_path):
     assert not by_name(results, "Verification thresholds").passed
 
 
+def test_submission_checker_does_not_reject_icon_word_inside_merchant_domain(tmp_path):
+    root = make_project(tmp_path, {
+        "domain_url": "https://tavisa.in",
+        "logo_url": "https://tavisa.in/cdn/shop/files/logo_black.png",
+    })
+    assert by_name(check_submission(root, minimum_rows=1), "Logo validation").passed
+
+
 def test_submission_checker_rejects_bad_social_and_duplicate_contacts(tmp_path):
     root = make_project(tmp_path, {
         "contacts": json.dumps({"emails": ["a@brand.in", "a@brand.in"], "phones": []}),

@@ -117,8 +117,10 @@ class SearchResultsCSVProvider:
                     continue
                 signal = next((value.strip('"') for value in SHOPIFY_SIGNALS if value.strip('"').lower() in query.lower()), None)
                 location = (row.get(fields.get("location", "")) or "").strip() or None
+                category_hint = (row.get(fields.get("category_hint", "")) or "").strip() or None
                 provenance = CandidateProvenance(
                     source=self.name, query=query or None, location=location, source_url=str(self.path), signal=signal,
+                    category_hint=category_hint,
                 )
                 records.append(CandidateRecord(
                     normalized_domain=normalized, original_url=original, discovery_source=self.name,

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import csv
 import json
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 
 from rivyou.models import CandidateStatus
+from rivyou.audit.automated import AUTO_AUDIT_COLUMNS, MANUAL_COLUMNS
 from rivyou.storage.sqlite_store import SQLiteStore
 
 AUDIT_COLUMNS = (
@@ -16,6 +18,98 @@ AUDIT_COLUMNS = (
     "manual_shopify_correct", "manual_india_correct", "manual_logo_correct", "manual_state_correct",
     "manual_contacts_correct", "manual_notes",
 )
+
+TARGETED_AUDIT_COLUMNS = (*AUTO_AUDIT_COLUMNS, "selection_reason")
+
+
+def create_targeted_accepted_sample(
+    auto_audit_path: str | Path,
+    output_dir: str | Path,
+    *,
+    target: int = 15,
+    seed: int = 3,
+    review_all_limit: int = 6,
+) -> Path:
+    """Select accepted stores that expose quality risk, then fill with random HIGH rows."""
+    with Path(auto_audit_path).open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    selected: dict[str, dict[str, str]] = {}
+    reasons: dict[str, list[str]] = {}
+
+    def add(row: dict[str, str], reason: str) -> None:
+        domain = row["domain"]
+        if domain not in selected and len(selected) >= target:
+            return
+        selected.setdefault(domain, row)
+        reasons.setdefault(domain, [])
+        if reason not in reasons[domain]:
+            reasons[domain].append(reason)
+
+    def score(row: dict[str, str], field: str) -> int:
+        try:
+            return int(row.get(field) or 0)
+        except ValueError:
+            return 0
+
+    uncertain = [row for row in rows if row.get("auto_audit_confidence") in {"MEDIUM", "LOW"}]
+    if len(uncertain) <= review_all_limit:
+        for row in uncertain:
+            add(row, f"all_{row['auto_audit_confidence'].lower()}_confidence")
+    else:
+        for row in uncertain[:review_all_limit]:
+            add(row, f"sample_{row['auto_audit_confidence'].lower()}_confidence")
+
+    for row in sorted(rows, key=lambda item: (score(item, "shopify_score"), item["domain"]))[:2]:
+        add(row, "lowest_shopify_score")
+    for row in sorted(rows, key=lambda item: (score(item, "india_score"), item["domain"]))[:2]:
+        add(row, "lowest_india_score")
+
+    missing_fields = (
+        ("state", "missing_state"),
+        ("tagline_or_description", "missing_description"),
+        ("logo_url", "missing_logo"),
+    )
+    for field, reason in missing_fields:
+        missing = next((row for row in rows if not (row.get(field) or "").strip()), None)
+        if missing:
+            add(missing, reason)
+
+    unusual = [
+        row for row in rows
+        if row.get("auto_contacts_check") != "PASS" or row.get("auto_socials_check") in {"FAIL", "UNCERTAIN"}
+    ]
+    for row in unusual[:2]:
+        add(row, "unusual_contact_or_social")
+
+    high = [row for row in rows if row.get("auto_audit_confidence") == "HIGH"]
+    random.Random(seed).shuffle(high)
+    for row in high:
+        add(row, "random_high_confidence")
+        if len(selected) >= target:
+            break
+    for row in rows:
+        add(row, "random_accepted_fill")
+        if len(selected) >= target:
+            break
+
+    output_rows: list[dict[str, str]] = []
+    for domain, source in selected.items():
+        row = {column: source.get(column, "") for column in AUTO_AUDIT_COLUMNS}
+        for column in MANUAL_COLUMNS:
+            row[column] = ""
+        row["selection_reason"] = ";".join(reasons[domain])
+        output_rows.append(row)
+
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target_path = target_dir / f"targeted_accepted_audit_{timestamp}.csv"
+    with target_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=TARGETED_AUDIT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(output_rows)
+    return target_path
 
 
 def create_audit_sample(

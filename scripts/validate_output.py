@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -44,7 +45,13 @@ def validate(path: str | Path) -> int:
     duplicate_count = len([key for index, key in enumerate(keys) if key and key in keys[:index]])
     invalid_domains = [value for value in domains if not normalize_domain(value)]
     logos = frame.get("logo_url", pd.Series(dtype=str))
-    invalid_logos = [value for value in logos if value and (value.lower().endswith("favicon.ico") or REJECT_LOGO_RE.search(value))]
+    invalid_logos = [
+        value for value in logos
+        if value and (
+            urlsplit(value).path.lower().endswith("favicon.ico")
+            or REJECT_LOGO_RE.search(urlsplit(value).path)
+        )
+    ]
     malformed_json = duplicate_contacts = share_urls = invalid_scores = 0
     missing_all_contacts = 0
     for _, row in frame.iterrows():

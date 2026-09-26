@@ -1,4 +1,6 @@
 import pytest
+import csv
+import asyncio
 
 from rivyou.audit.automated import (
     Check,
@@ -10,9 +12,12 @@ from rivyou.audit.automated import (
     check_shopify,
     check_socials,
     check_state,
+    run_auto_audit,
 )
 from rivyou.crawler import CrawledPage
 from rivyou.models import StoreRecord
+from rivyou.audit.sampling import create_targeted_accepted_sample
+from rivyou.storage.sqlite_store import SQLiteStore
 
 
 def page(html, url="https://brand.in", error=None):
@@ -114,3 +119,68 @@ def test_social_share_link_fails():
 )
 def test_audit_confidence_aggregation(checks, available, expected):
     assert aggregate_confidence(checks, available) == expected
+
+
+def test_targeted_sample_covers_risks_and_keeps_manual_fields_blank(tmp_path):
+    rows = []
+    for index in range(20):
+        rows.append({
+            "domain": f"https://brand{index}.in", "pipeline_status": "ACCEPTED",
+            "shopify_score": str(4 + index), "india_score": str(5 + index),
+            "category": "Apparel", "tagline_or_description": "" if index == 2 else "Brand",
+            "state": "" if index == 3 else "Karnataka",
+            "logo_url": "" if index == 4 else "https://brand.in/logo.png",
+            "auto_contacts_check": "UNCERTAIN" if index == 5 else "PASS",
+            "auto_socials_check": "FAIL" if index == 6 else "PASS",
+            "auto_audit_confidence": "MEDIUM" if index < 2 else "HIGH",
+        })
+    source = tmp_path / "auto.csv"
+    with source.open("w", newline="", encoding="utf-8") as handle:
+        fieldnames = sorted({key for row in rows for key in row})
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    path = create_targeted_accepted_sample(source, tmp_path, target=15, seed=7)
+    with path.open(newline="", encoding="utf-8") as handle:
+        sampled = list(csv.DictReader(handle))
+    assert len(sampled) == 15
+    assert {"https://brand2.in", "https://brand3.in", "https://brand4.in"} <= {row["domain"] for row in sampled}
+    assert all(not row[column] for row in sampled for column in (
+        "manual_shopify_correct", "manual_india_correct", "manual_logo_correct",
+        "manual_state_correct", "manual_contacts_correct", "manual_notes",
+    ))
+    assert all(row["selection_reason"] for row in sampled)
+
+
+@pytest.mark.asyncio
+async def test_full_auto_audit_processes_stores_concurrently(tmp_path, monkeypatch):
+    store = SQLiteStore(tmp_path / "state.db")
+    for index in range(4):
+        domain = f"https://brand{index}.in"
+        store.save_store_result(domain, record(domain_url=domain))
+
+    class TrackingCrawler:
+        active = 0
+        maximum = 0
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def crawl_store(self, domain):
+            type(self).active += 1
+            type(self).maximum = max(type(self).maximum, type(self).active)
+            await asyncio.sleep(0.01)
+            type(self).active -= 1
+            return [page("", url=domain, error="offline")]
+
+    monkeypatch.setattr("rivyou.audit.automated.AsyncCrawler", TrackingCrawler)
+    summary = await run_auto_audit(store, tmp_path)
+    assert summary.total == 4
+    assert TrackingCrawler.maximum > 1

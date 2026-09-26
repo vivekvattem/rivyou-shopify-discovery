@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS candidate_provenance (
     location TEXT NOT NULL DEFAULT '',
     source_url TEXT NOT NULL DEFAULT '',
     signal TEXT NOT NULL DEFAULT '',
+    category_hint TEXT NOT NULL DEFAULT '',
     observed_at TEXT NOT NULL,
     UNIQUE(candidate_id, source, discovery_query, source_url, signal)
 );
@@ -181,6 +182,7 @@ class SQLiteStore:
             })
             self._ensure_columns(connection, "candidates", {"retry_reason": "TEXT"})
             self._ensure_columns(connection, "candidate_provenance", {"location": "TEXT NOT NULL DEFAULT ''"})
+            self._ensure_columns(connection, "candidate_provenance", {"category_hint": "TEXT NOT NULL DEFAULT ''"})
             connection.execute(
                 """UPDATE candidates SET retry_reason = CASE
                    WHEN lower(COALESCE(last_error,'')) LIKE '%robots.txt%' THEN 'ROBOTS_BLOCKED'
@@ -236,10 +238,11 @@ class SQLiteStore:
             for provenance in candidate.provenance:
                 cursor = connection.execute(
                     """INSERT OR IGNORE INTO candidate_provenance
-                       (candidate_id, source, discovery_query, location, source_url, signal, observed_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (candidate_id, source, discovery_query, location, source_url, signal, category_hint, observed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (candidate_id, provenance.source, provenance.query or "", provenance.location or "",
-                     provenance.source_url or "", provenance.signal or "", provenance.observed_at.isoformat()),
+                     provenance.source_url or "", provenance.signal or "", provenance.category_hint or "",
+                     provenance.observed_at.isoformat()),
                 )
                 added += cursor.rowcount
             return UpsertOutcome(created=created, provenance_added=added)
@@ -257,7 +260,8 @@ class SQLiteStore:
         return [CandidateProvenance(
             source=row["source"], query=row["discovery_query"] or None, location=row["location"] or None,
             source_url=row["source_url"] or None,
-            signal=row["signal"] or None, observed_at=datetime.fromisoformat(row["observed_at"]),
+            signal=row["signal"] or None, category_hint=row["category_hint"] or None,
+            observed_at=datetime.fromisoformat(row["observed_at"]),
         ) for row in rows]
 
     def get_candidate(self, domain: str) -> CandidateRecord | None:
@@ -456,7 +460,8 @@ class SQLiteStore:
                 """SELECT p.source, COUNT(DISTINCT p.candidate_id) candidates,
                    COUNT(DISTINCT CASE WHEN c.status='ACCEPTED' THEN p.candidate_id END) accepted,
                    COUNT(DISTINCT CASE WHEN c.status='REJECTED_SHOPIFY' THEN p.candidate_id END) rejected_shopify,
-                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india
+                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india,
+                   COUNT(DISTINCT CASE WHEN c.status='FAILED' THEN p.candidate_id END) failed
                    FROM candidate_provenance p JOIN candidates c ON c.id=p.candidate_id
                    GROUP BY p.source ORDER BY candidates DESC"""
             ).fetchall()
@@ -468,7 +473,8 @@ class SQLiteStore:
                 """SELECT p.discovery_query query, COUNT(DISTINCT p.candidate_id) candidates,
                    COUNT(DISTINCT CASE WHEN c.status='ACCEPTED' THEN p.candidate_id END) accepted,
                    COUNT(DISTINCT CASE WHEN c.status='REJECTED_SHOPIFY' THEN p.candidate_id END) rejected_shopify,
-                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india
+                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india,
+                   COUNT(DISTINCT CASE WHEN c.status='FAILED' THEN p.candidate_id END) failed
                    FROM candidate_provenance p JOIN candidates c ON c.id=p.candidate_id
                    WHERE p.discovery_query != '' GROUP BY p.discovery_query ORDER BY candidates DESC, query"""
             ).fetchall()
@@ -482,11 +488,33 @@ class SQLiteStore:
                    COUNT(DISTINCT p.candidate_id) candidates,
                    COUNT(DISTINCT CASE WHEN c.status='ACCEPTED' THEN p.candidate_id END) accepted,
                    COUNT(DISTINCT CASE WHEN c.status='REJECTED_SHOPIFY' THEN p.candidate_id END) rejected_shopify,
-                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india
+                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india,
+                   COUNT(DISTINCT CASE WHEN c.status='FAILED' THEN p.candidate_id END) failed
                    FROM candidate_provenance p JOIN candidates c ON c.id=p.candidate_id
                    GROUP BY p.source, p.signal,
                      CASE WHEN p.location != '' THEN p.location ELSE p.discovery_query END
                    ORDER BY candidates DESC"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def location_stats(self) -> list[dict[str, Any]]:
+        return self._provenance_dimension_stats("location")
+
+    def category_hint_stats(self) -> list[dict[str, Any]]:
+        return self._provenance_dimension_stats("category_hint")
+
+    def _provenance_dimension_stats(self, column: str) -> list[dict[str, Any]]:
+        if column not in {"location", "category_hint"}:
+            raise ValueError(f"Unsupported provenance dimension: {column}")
+        with self.connection() as connection:
+            rows = connection.execute(
+                f"""SELECT p.{column} {column}, COUNT(DISTINCT p.candidate_id) candidates,
+                   COUNT(DISTINCT CASE WHEN c.status='ACCEPTED' THEN p.candidate_id END) accepted,
+                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_SHOPIFY' THEN p.candidate_id END) rejected_shopify,
+                   COUNT(DISTINCT CASE WHEN c.status='REJECTED_INDIA' THEN p.candidate_id END) rejected_india,
+                   COUNT(DISTINCT CASE WHEN c.status='FAILED' THEN p.candidate_id END) failed
+                   FROM candidate_provenance p JOIN candidates c ON c.id=p.candidate_id
+                   WHERE p.{column} != '' GROUP BY p.{column} ORDER BY candidates DESC, p.{column}"""
             ).fetchall()
         return [dict(row) for row in rows]
 

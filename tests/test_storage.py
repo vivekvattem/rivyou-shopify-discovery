@@ -40,6 +40,18 @@ def test_candidate_provenance_merges_sources(tmp_path):
     assert store.get_candidate("https://brand.in").signals == ["cdn.shopify.com"]
 
 
+def test_provenance_category_and_failed_quality_stats(tmp_path):
+    store = SQLiteStore(tmp_path / "state.db")
+    record = candidate()
+    record.provenance[0].location = "Mumbai"
+    record.provenance[0].category_hint = "fashion"
+    store.upsert_candidate(record)
+    store.transition("https://brand.in", CandidateStatus.FAILED, force=True)
+    assert store.get_provenance("https://brand.in")[0].category_hint == "fashion"
+    assert store.location_stats()[0]["failed"] == 1
+    assert store.category_hint_stats()[0]["category_hint"] == "fashion"
+
+
 def test_valid_status_transitions_and_attempt_count(tmp_path):
     store = SQLiteStore(tmp_path / "state.db")
     store.upsert_candidate(candidate())

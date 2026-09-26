@@ -234,9 +234,34 @@ python scripts/run_auto_audit.py \
 
 The command safely revisits the homepage and bounded important pages through the existing crawler/cache, compares current evidence with stored acceptance evidence, and writes `auto_audit_<timestamp>.csv`. It reports `PASS`, `FAIL`, `UNCERTAIN`, or `MISSING` separately for Shopify, India, logo, state, contacts, and socials, plus an overall `HIGH`, `MEDIUM`, or `LOW` machine confidence. Inaccessible sites are uncertain rather than false failures. INR, `.in`, or India-shipping language alone cannot produce an automated India pass.
 
+Create a fresh risk-targeted accepted-store worksheet from that output:
+
+```bash
+python scripts/create_targeted_audit.py \
+  data/audits/auto_audit_<timestamp>.csv \
+  --target 15 \
+  --output data/audits
+```
+
+This deterministic sample prioritizes MEDIUM/LOW machine confidence, the lowest
+accepted Shopify and India scores, missing state/description/logo cases, and
+unusual contact/social results, then fills the target with seeded random HIGH
+rows. It labels each selection reason and keeps every `manual_*` field blank.
+
 This is a prioritization layer, not human verification. Every `manual_*` field in its output is deliberately blank. `HIGH` must never be converted automatically into a manual “yes”; human sampling is still required to measure precision.
 
-The 2026-09-26 run audited all 24 accepted stores: 24 were `HIGH`, none were `MEDIUM` or `LOW`, and no record met the CLI's priority-review criteria. All 24 re-passed Shopify, India, and contact checks. Twenty-three logos re-passed semantic checks and one remained legitimately missing; 19 states re-passed and five remained legitimately missing; 17 stores had confirmed merchant-page social profiles and seven remained legitimately missing. These are machine results only—manual precision remains `N/A` until a reviewer completes the blank fields.
+The Wave 1 human review covered all 24 accepted stores. Shopify and India correctness were each 24/24 (100%). Logo correctness was 23/23 among records with a logo, with one missing logo. State correctness was 22/22 among records with a state, with two missing states in the reviewed worksheet. Contact correctness was 23/23 among records with contacts, with one missing-contact row. These are reviewer-entered results from `data/audits/auto_audit_20260926T082022Z_reviewed.csv`, not machine-inferred ratings.
+
+After Wave 2, the 2026-09-26 automated pre-review audited all 126 accepted stores: 125 were `HIGH`, one was `MEDIUM`, and none were `LOW`. Shopify re-passed for 126/126; India passed for 125 with one uncertain live recheck; contacts passed for 126/126; 125 logos passed with one missing; 119 states passed with seven missing; and 100 stores had qualifying social profiles while 26 remained missing. This automated audit is only a prioritization layer. Its manual fields remain blank, as do the fields in the fresh 10-row stratified manual worksheet.
+
+Wave 3 expanded the live database to 525 candidates. Its full automated audit
+covered all 381 accepted result rows: 375 were `HIGH`, five `MEDIUM`, and one
+`LOW`; Shopify re-passed for 381/381 and India passed for 380 with one
+uncertain live recheck. The fresh targeted 15-row worksheet contains all six
+non-HIGH rows plus low-score, missing-field, unusual contact/social, and seeded
+random HIGH cases. The detailed check counts are in
+`data/audits/wave3_summary.md`; manual fields remain blank, so no Wave 3 human
+precision claim is made.
 
 Run the final artifact gate with the assignment target, or a smaller pilot target while iterating:
 
@@ -282,7 +307,7 @@ The Phase 3 worksheet also includes category, state, logo URL, emails, phones, s
 
 ## Observed real pilot results
 
-On 2026-09-25, 33 real merchant candidates were curated from attributable public search results using exact `"Powered by Shopify" + Indian location` queries and ingested through `data/discovery/search_results.csv`. They remained unverified until the pipeline ran.
+Wave 1 began with 33 real merchant candidates curated from attributable public search results using exact `"Powered by Shopify" + Indian location` queries. Wave 2 added 148 real result rows across six location-separated import files: 148 were valid, 144 were unique within the import, 133 were new to the database, 11 already existed, four were within-import duplicates, and none were invalid. Wave 3 added 775 attributable rows across 13 import files; 409 registered domains were unique within those inputs, 359 were genuinely new, 50 already existed, and 366 were duplicate observations. The larger raw count was necessary because the first 514 rows yielded only 247 new domains, below the hard 350-new-domain checkpoint. The live database now contains 525 unique candidates without a reset.
 
 The first controlled batch processed the highest-priority 25 candidates:
 
@@ -297,7 +322,7 @@ The first controlled batch processed the highest-priority 25 candidates:
 | Processing throughput | 23.67 domains/minute |
 | Acceptance throughput | 17.05 stores/minute |
 
-Inspection found and fixed four concrete extraction/verification defects: placeholder merchant contacts, generic/share Facebook URLs, weak kidswear category weighting, and address PIN selection when an unrelated six-digit number appeared earlier in the page. Reprocessing the three India-rejected records after that conservative address-context fix accepted one additional store; two remained rejected. Completing the eight remaining NEW candidates accepted five more. The current pilot export contains 24 unique accepted stores; one candidate is rejected as non-Shopify, two are rejected by India verification, and six are `FAILED` after repeatedly honoring explicit `robots.txt` blocks. There are no NEW or RETRY candidates left. This is a pilot dataset, not the final 1,000-store submission.
+Inspection found and fixed four concrete extraction/verification defects during Wave 1: placeholder merchant contacts, generic/share Facebook URLs, weak kidswear category weighting, and address PIN selection when an unrelated six-digit number appeared earlier in the page. Waves 2 and 3 did not change verification thresholds. Wave 2's staged real-network runs accepted 102 of 133 newly acquired domains. Wave 3 accepted 255 of 359 new domains (71.0%), rejected 32 on Shopify evidence and 30 on India evidence, and left 42 as bounded network failures. The database now has 381 accepted result rows, which final registered-domain deduplication reduces to 380 public records. Across all 525 candidates, 36 are rejected by Shopify verification, 35 by India verification, and 73 are `FAILED`. There are no `NEW`, `RETRY`, `QUEUED`, or `PROCESSING` candidates left. This is a 500-candidate checkpoint dataset, not the final 1,000-store submission.
 
 The observed failure patterns, generic fixes, and anonymized/static regression coverage are recorded in `DEVELOPMENT_NOTES.md`. No Phase 4 extractor rule was changed without a completed human rating.
 
@@ -305,20 +330,20 @@ Current accepted-record completeness after those fixes:
 
 | Field | Missing |
 |---|---:|
-| Email | 0.0% |
-| Phone | 8.3% |
-| Any contact | 0.0% |
-| Social profile | 29.2% |
+| Email | 3.4% |
+| Phone | 6.8% |
+| Any contact | 1.1% |
+| Social profile | 21.6% |
 | Category | 0.0% |
-| Description | 0.0% |
-| Logo | 4.2% |
-| State | 20.8% |
+| Description | 2.6% |
+| Logo | 3.2% |
+| State | 7.9% |
 
-The missing-field rows are reproducibly listed in `data/audits/missing_fields.csv`, and `data/output/missing_fields.md` is generated directly from the export. Seven stores have no qualifying social-profile anchor in the fetched static pages; share/settings URLs are deliberately discarded. Two stores expose no validated phone in the bounded pages. One store has no image that passes the non-favicon logo rules. Five stores provide enough independent India evidence to pass, but no sufficiently contextual business state; the system retains an empty value rather than copying a customer, stockist, or shipping location. These are observed missing-value conditions, not claims that the merchants publish no such data elsewhere.
+The missing-field rows are reproducibly listed in `data/audits/missing_fields.csv`, and `data/output/missing_fields.md` is generated directly from the 380-record export. Eighty-two stores have no qualifying social-profile anchor in the fetched static pages; share/settings URLs are deliberately discarded. Twenty-six expose no validated phone, 13 expose no validated email, and four have neither contact type in the bounded pages. Twelve stores have no image that passes the non-favicon logo rules. Thirty provide enough independent India evidence to pass but no sufficiently contextual business state; the system retains an empty value rather than copying a customer, stockist, or shipping location. These are observed missing-value conditions, not claims that the merchants publish no such data elsewhere.
 
-Manual precision remains **not yet measured** because the generated worksheet's manual correctness cells are intentionally blank. No Shopify, India, logo, or state precision percentage is claimed until a reviewer fills those cells and runs `evaluate_audit.py`.
+Wave 1 manual precision is recorded above. Wave 2's stratified worksheet and Wave 3's fresh targeted worksheet remain **not yet reviewed** because their manual correctness cells are intentionally blank; no new precision percentage is claimed until a reviewer fills those cells and runs `evaluate_audit.py`.
 
-The original three `RETRY` records and three further unprocessed candidates were inspected through bounded attempts: all six were blocked by `robots.txt`. They are retained as `FAILED` with `ROBOTS_BLOCKED` reason after the attempt budget, not described as timeouts or server failures, and the crawler does not bypass those directives.
+Final failure reasons are retained explicitly: 46 `DNS_ERROR`, 19 `ROBOTS_BLOCKED`, seven `SSL_ERROR`, and one `TIMEOUT`. All 42 Wave 3 failures ended as `DNS_ERROR` during the last network pass. The crawler did not bypass robots directives, and no domain exceeded the configured attempt budget.
 
 ## Extraction methodology and taxonomy
 

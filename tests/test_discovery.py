@@ -47,8 +47,8 @@ def test_search_query_generation_is_unique_and_bounded():
 async def test_master_csv_preserves_row_provenance_and_counts_invalid(tmp_path):
     path = tmp_path / "candidates_master.csv"
     path.write_text(
-        "url,domain,query,source,location\n"
-        ",brand.in,powered mumbai,manual-search,Mumbai\n"
+        "url,domain,query,source,location,category_hint\n"
+        ",brand.in,powered mumbai,manual-search,Mumbai,fashion\n"
         "not a url,,,,\n"
     )
     provider = CSVDiscoveryProvider(path)
@@ -58,6 +58,7 @@ async def test_master_csv_preserves_row_provenance_and_counts_invalid(tmp_path):
     assert records[0].provenance[0].source == "manual-search"
     assert records[0].provenance[0].query == "powered mumbai"
     assert records[0].provenance[0].location == "Mumbai"
+    assert records[0].provenance[0].category_hint == "fashion"
     assert records[0].provenance[0].source_url == str(path)
 
 

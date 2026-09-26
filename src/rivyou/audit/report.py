@@ -8,11 +8,12 @@ from typing import Any
 
 from rivyou.models import CandidateStatus
 from rivyou.storage.sqlite_store import SQLiteStore
+from rivyou.utils.dedupe import dedupe_records
 
 
 def build_report(store: SQLiteStore) -> dict[str, Any]:
     counts = store.status_counts()
-    records = store.accepted_records()
+    records = dedupe_records(store.accepted_records())
     total = len(records)
 
     def missing(attribute: str) -> float:
@@ -25,6 +26,7 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
             "acceptance_rate": round(100 * row["accepted"] / candidates, 1) if candidates else 0.0,
             "shopify_rejection_rate": round(100 * row["rejected_shopify"] / candidates, 1) if candidates else 0.0,
             "india_rejection_rate": round(100 * row["rejected_india"] / candidates, 1) if candidates else 0.0,
+            "failure_rate": round(100 * row["failed"] / candidates, 1) if candidates else 0.0,
         }
 
     sources = store.source_stats()
@@ -47,6 +49,8 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
         "top_discovery_sources": [with_rates(row) for row in sources],
         "query_family_quality": query_families,
         "query_quality": [with_rates(row) for row in store.query_stats()],
+        "location_quality": [with_rates(row) for row in store.location_stats()],
+        "category_hint_quality": [with_rates(row) for row in store.category_hint_stats()],
         "retry_reason_counts": store.retry_reason_counts(),
         "shopify_rejection_rate": round(100 * counts.get("REJECTED_SHOPIFY", 0) / sum(counts.values()), 1) if counts else 0.0,
         "india_rejection_rate": round(100 * counts.get("REJECTED_INDIA", 0) / sum(counts.values()), 1) if counts else 0.0,

@@ -76,7 +76,8 @@ def check_submission(project_root: str | Path, minimum_rows: int = 1000) -> list
     keys = [registered_domain(item) for item in domains]
     results.append(CheckResult("Unique domains", len([item for item in keys if item]) == len(set(item for item in keys if item))))
     bad_logos = [row.get("logo_url", "") for row in rows if row.get("logo_url") and (
-        row["logo_url"].lower().endswith("favicon.ico") or REJECT_LOGO_RE.search(row["logo_url"])
+        urlsplit(row["logo_url"]).path.lower().endswith("favicon.ico")
+        or REJECT_LOGO_RE.search(urlsplit(row["logo_url"]).path)
     )]
     results.append(CheckResult("Logo validation", not bad_logos, f"{len(bad_logos)} forbidden icons"))
     malformed_json = duplicate_contacts = bad_socials = 0

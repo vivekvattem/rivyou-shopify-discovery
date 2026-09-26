@@ -35,6 +35,7 @@ class CandidateProvenance(BaseModel):
     location: str | None = None
     source_url: str | None = None
     signal: str | None = None
+    category_hint: str | None = None
     observed_at: datetime = Field(default_factory=utc_now)
 
 

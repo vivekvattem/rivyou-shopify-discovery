@@ -44,8 +44,10 @@ class CSVDiscoveryProvider:
                 source = (row.get(columns.get("source", "")) or "").strip() or self.source_name
                 query = (row.get(columns.get("query", "")) or "").strip() or None
                 location = (row.get(columns.get("location", "")) or "").strip() or None
+                category_hint = (row.get(columns.get("category_hint", "")) or "").strip() or None
                 provenance = CandidateProvenance(
                     source=source, query=query, location=location, source_url=str(self.path), signal=signal,
+                    category_hint=category_hint,
                 )
                 records.append(CandidateRecord(
                     normalized_domain=normalized, original_url=original, discovery_source=source,
