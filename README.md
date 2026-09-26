@@ -1,417 +1,300 @@
 # Rivyou Indian Shopify Discovery
 
-An evidence-based, resumable Python system that discovers candidate domains, verifies Shopify and Indian-business signals, and extracts structured merchant records. It includes provenance-aware bulk intake, SQLite state, homepage pre-filtering, persistent HTTP caching, controlled wave processing, manual auditing, source/query yield reporting, and reproducible export. It does **not** claim to have discovered 1,000 stores.
+Rivyou is an evidence-based Python pipeline for finding Indian Shopify merchants, verifying them independently, extracting assignment-ready business fields, and exporting a deduplicated dataset. Discovery only creates leads: no search query, `.in` domain, INR price, or “Powered by Shopify” footer can make a store pass by itself.
 
-## Problem statement
+## Final result summary
 
-Common shortcuts produce false positives: a `.in` domain does not prove that a business is Indian, INR can be shown by international stores, “Powered by Shopify” is a weak platform signal, and a favicon is not a brand logo. This project gathers multiple independent signals, assigns explicit weights, and accepts a store only after both Shopify and India thresholds are met.
+These figures come from `data/state/rivyou.db`, `data/output/quality_report.json`, and the final CSV/JSON exports:
 
-## Architecture
+| Metric | Observed result |
+|---|---:|
+| Raw discovery observations across all waves | 3,034 |
+| Unique candidates | 1,607 |
+| Accepted candidate rows | 1,153 |
+| Stored accepted result rows | 1,150 |
+| Unique exported stores after final-domain deduplication | **1,143** |
+| Rejected by Shopify verification | 130 |
+| Rejected by India verification | 132 |
+| Bounded failures | 192 |
+| Remaining `NEW` / `RETRY` / `PROCESSING` | 0 / 0 / 0 |
+
+The three-row difference between accepted candidates and stored results comes from candidate aliases converging on an existing canonical merchant result. Final submission size is always the **1,143 unique exported domains**, not the accepted-candidate count.
+
+The production validator finds zero duplicate domains, invalid URLs, forbidden favicon logos, malformed serialized fields, duplicate contacts, social-share URLs, or rows below the unchanged verification thresholds. `python scripts/check_submission.py` is the authoritative submission-readiness gate and requires at least 1,000 unique rows.
+
+## Pipeline overview
 
 ```text
-discovery providers / seed CSV
-  -> normalization, provenance merge, and registered-domain deduplication
-  -> SQLite candidate queue ordered by discovery priority
-  -> cached homepage Shopify pre-filter
-  -> async homepage fetch (robots.txt, retries, redirect handling, size/type guards)
-  -> Shopify evidence gate
-  -> ranked important-page fetch (bounded to five pages by default)
-  -> India evidence gate
-  -> independent field extractors
-  -> final-domain deduplication
-  -> SQLite result persistence
-  -> audited CSV + JSON export and separate debug evidence
+attributable public search results / import CSVs
+  -> normalize URLs and preserve provenance
+  -> merge candidate domains in SQLite
+  -> bounded, robots-aware crawl and homepage pre-filter
+  -> independent Shopify evidence gate
+  -> independent India-business evidence gate
+  -> extract seven required public fields
+  -> resolve redirects and deduplicate final merchant domains
+  -> CSV, JSON, debug evidence, quality report, and audits
 ```
 
-The package is split by responsibility:
+The queue, crawl cache, provenance, run metrics, and accepted records are persisted in SQLite, so interrupted batches can resume without clearing earlier waves.
 
-- `crawler.py`: reusable `httpx.AsyncClient`, concurrency control, robots policy, bounded HTML fetching, and important-link ranking.
-- `verify/`: weighted Shopify and India decisions.
-- `extract/`: contacts, socials, description, logo, state/location, and category logic.
-- `utils/`: URL normalization, text helpers, and deduplication.
-- `pipeline.py`: fault-isolated orchestration and output serialization.
-- `discover/`: Phase 1 seeds plus generic/search/Common Crawl providers, query generation, fingerprints, provenance, and orchestration.
-- `storage/`: SQLite candidate state and compressed HTTP cache.
-- `batch.py`: recoverable priority-batch execution using the existing verifier/extractors.
-- `audit/`: stratified manual-review samples and funnel/quality reporting.
+## Candidate discovery and provenance
 
-The crawler returns a small `CrawledPage` abstraction. A future Playwright renderer can implement the same boundary for JavaScript-heavy pages without changing verification or extraction logic.
+Candidates were collected from attributable public search results using combinations of Shopify footprints, Indian locations, and commercial categories. Examples of discovery footprints include `cdn.shopify.com`, `/cdn/shop/`, `Shopify.theme`, `shopify-section`, and “Powered by Shopify”. Locations covered India-wide searches, states, and cities such as Mumbai, Bengaluru, Delhi NCR, Chennai, Hyderabad, Pune, Ahmedabad, Kolkata, Jaipur, Kochi, Coimbatore, and Indore. Category hints included fashion, jewellery, beauty, skincare, home, furniture, food, footwear, fitness, and kids.
+
+Every imported observation preserves:
+
+```text
+query,result_url,source,location,category_hint
+```
+
+Exact-query history and observed source/query yields were checked before expanding into new location/category combinations. The final acquisition wave contains 2,078 valid result rows in 28 files under `data/discovery/imports/final_wave/`; normalization produced 1,082 genuinely new candidates, 173 existing candidates, and 823 duplicate observations. Duplicate observations remain useful provenance but do not create duplicate candidates.
+
+Search provenance is **not verification evidence**. Search results can contain directories, international storefronts, documentation, and stale pages. Every discovered domain still passes the same live/cached Shopify and India verification pipeline.
 
 ## Verification methodology
 
-### Shopify
+Both production thresholds remain **4**. They were not lowered to reach the row target.
 
-Signals are counted once per store and weighted by specificity. Strong evidence includes `Shopify.theme` and Shopify CDN paths (+3); supporting evidence includes `ShopifyAnalytics` and `myshopify.com` references (+2), `shopify-section`, and “Powered by Shopify” (+1). The default threshold is 4, so the weak footer text alone cannot pass. An optional product-JSON evidence helper exists for a later selective active check; the pipeline does not request `/products.json` indiscriminately.
+### Shopify verification
 
-### India
+The Shopify verifier scores independent storefront signals once per store:
 
-The verifier looks for GSTIN, explicit Indian business/contact address language, address-context PIN codes, `+91` numbers, known cities/states, India-specific shipping language, INR pricing, and `.in`. Strong address evidence carries more weight. The default threshold is 4; `.in` or INR alone scores only 1 and is rejected. Extracted state and city are retained with detected PIN codes in the debug JSON.
+- `Shopify.theme` and Shopify CDN paths: weight 3 each.
+- Shopify response headers: weight 3.
+- `ShopifyAnalytics` and a `myshopify.com` reference: weight 2 each.
+- `shopify-section` and “Powered by Shopify”: weight 1 each.
 
-Thresholds and network limits are configurable through environment variables documented in `.env.example`.
+A store must score at least 4. Consequently, “Powered by Shopify” alone cannot pass, and a search query containing a Shopify term contributes nothing to the verification score.
 
-## Why discovery is not verification
+### India verification
 
-Discovery produces leads, not truth. A search result for `"cdn.shopify.com" "Mumbai"`, a `.in` hostname, a `myshopify.com` URL from Common Crawl, or even a homepage fingerprint can increase processing priority but cannot make a record accepted. Every candidate still passes the unchanged Shopify threshold, India threshold, and extraction pipeline. Discovery priority is stored separately from verification scores and is never added to either score.
+The India verifier combines business-location evidence:
 
-## Candidate discovery
+- Contextual Indian physical address: strongest signal, weight 4.
+- GSTIN or explicit India address language: weight 3.
+- `+91` merchant phone or an address-context Indian PIN: weight 2.
+- Contextual state/city, India shipping, INR pricing, and `.in`: supporting signals, weight 1 each.
 
-All providers implement the same asynchronous interface and return normalized `CandidateRecord` values with provenance. Duplicate domains are merged rather than copied, while independent source/query/signal observations remain in `candidate_provenance`.
+A store must score at least 4. A `.in` suffix or INR pricing alone is insufficient. City/state mentions from reviews, stockist lists, or generic shipping copy are not promoted to a business state without address context.
 
-- **Manual search/API exports:** `query,result_url` CSV ingestion is first-class. This is the recommended search workflow because it avoids scraping search engines or depending on a paid API.
-- **Master CSV imports:** `data/discovery/candidates_master.csv` accepts `url`, `domain`, `website`, or `domain_url`; only one URL/domain value is required per row. Optional `source`, `query`, and `location` values are retained as provenance.
-- **Bulk directory imports:** every CSV in `data/discovery/imports/` is ingested in filename order, with its filename retained in `source_url`. Domains are deduplicated globally while independent file observations remain attached as provenance.
-- **Search query generator:** creates fewer than 500 ranked combinations of five Shopify footprints with all Indian states/UTs and major commercial cities. High-yield signal/location combinations rank first; a bounded set adds commercial category hints. Output columns are `query`, `priority`, `shopify_signal`, `location`, and `category_hint`.
-- **Common Crawl import:** consumes externally produced Common Crawl domain CSVs using the generic normalization path.
-- **Common Crawl URL index:** optional live mode queries indexed `*.myshopify.com` URLs. It is not run by default.
-- **Sitemap sampling:** optionally samples a few internal product, collection, or page URLs for an already-known candidate. It never uses a sitemap to discover unrelated domains.
+## Required field extraction
 
-### Common Crawl limitations
+The public export contains all seven requested fields, plus the two verification scores:
 
-Common Crawl's CDX index searches captured URLs and metadata; it is not a global full-text search engine for page bodies. It cannot directly answer “find every page containing `Shopify.theme`” without downstream WARC processing or an external derived index. The built-in provider therefore queries honest URL patterns such as `*.myshopify.com`, supports imported derived lists, and does not pretend that body-fingerprint search exists. Large-scale WARC processing is left as an optional future provider.
-
-## Persistent architecture and resumability
-
-`data/state/rivyou.db` is initialized automatically with five tables:
-
-| Table | Purpose |
+| Field | Extraction approach |
 |---|---|
-| `candidates` | One normalized domain, status, priority, attempts, errors, scores, and serialized evidence |
-| `candidate_provenance` | Unique source/query/source-URL/signal observations per candidate |
-| `crawl_cache` | Compressed response body, status, content type, timestamps, ETag, and Last-Modified |
-| `pipeline_runs` | Run ID, UTC timestamps, optional wave, complete funnel counters, score averages, and measured runtime |
-| `store_results` | One upserted full `StoreRecord` per final domain |
+| `domain_url` | Canonical HTTPS origin after redirects; normalized and deduplicated by registered/final merchant domain. |
+| `contacts` | Emails and phones from visible text, `mailto:`, `tel:`, and JSON-LD; normalized, deduplicated, and filtered for examples/platform placeholders. |
+| `socials` | Merchant profile links for Instagram, Facebook, X/Twitter, LinkedIn, and YouTube; share, intent, login, settings, platform-home, and Shopify-owned links are rejected. |
+| `category` | Deterministic taxonomy using title/H1 first, then description and collection/navigation evidence; ambiguous stores become `Other`. |
+| `tagline_or_description` | Meta description, OpenGraph, JSON-LD, concise hero text, then About-page text; merchant text only, capped at 500 characters. |
+| `logo_url` | Organization/Brand JSON-LD, semantic header/logo imagery, then weak OpenGraph fallback; favicons, app/payment/trust icons, product/social assets, and tiny images are rejected. |
+| `state` | Structured postal address or contextual address/PIN evidence, followed by conservative city/state mapping; unresolved values stay blank. |
 
-Candidate states are `NEW`, `QUEUED`, `PROCESSING`, `REJECTED_SHOPIFY`, `REJECTED_INDIA`, `ACCEPTED`, `FAILED`, and `RETRY`. Updates use unique constraints and transactions. `run_batch.py --recover-stale 30` moves candidates left in `PROCESSING` for more than 30 minutes to `RETRY`, allowing an interrupted run to resume safely. Retry reasons are normalized (`TIMEOUT`, `HTTP_429`, `HTTP_5XX`, `DNS_ERROR`, `SSL_ERROR`, `CONNECTION_ERROR`, `ROBOTS_BLOCKED`, or `OTHER_TRANSIENT`). HTTP requests have bounded internal retries, and candidates move to `FAILED` after `MAX_CANDIDATE_ATTEMPTS` rather than looping forever; they are not misclassified as Shopify/India rejections.
+Missing optional values are not pipeline errors when the merchant does not publish a qualifying value in the bounded static pages. The system leaves them blank rather than guessing.
 
-Priority favors strong discovery fingerprints, independent sources, Indian location terms in provenance, `.in`, and repeat discovery. It controls ordering only.
+## False-positive handling and judgment calls
 
-## Field extraction and false-positive controls
+- Discovery priority affects processing order only; it never changes a Shopify or India score.
+- International stores displaying INR or shipping to India fail unless stronger Indian-business evidence exists.
+- Marketplace, agency, directory, and documentation pages must pass the same storefront and business-location gates as any merchant.
+- Contacts resembling examples, platform support, image filenames, or known placeholder numbers are discarded.
+- Social sharing links and generic social homepages are not merchant profiles.
+- A favicon is not accepted as a logo; an OpenGraph image is only a weak fallback.
+- An Indian business on a `.com` domain can pass when address, GSTIN, PIN, or phone evidence is sufficient.
+- A missing state, logo, contact, social profile, or description is preferable to an inferred value.
 
-- Contacts combine `mailto:`/`tel:`, visible text, and JSON-LD. Emails are normalized and obvious examples/image false positives are rejected. Phone numbers are validated and formatted with `phonenumbers`.
-- Social URLs support Instagram, Facebook, X/Twitter, LinkedIn, and YouTube. Share/intent URLs, generic pages, and Shopify-owned profiles are rejected; query tracking is removed.
-- Description priority is meta description, OpenGraph description, JSON-LD, short homepage hero text, then About content. Text is never invented and is capped at 500 characters.
-- Logo priority is Organization/Brand JSON-LD, semantic header imagery, other logo-marked images, then OpenGraph as a weak fallback. Favicons, app icons, payment/provider marks, and known tiny images are rejected.
-- Location uses the complete Indian state/union-territory list, conservative abbreviations, and an explicit major-city mapping. Unknown stays null.
-- Category is a deterministic, extensible keyword classifier; uncertain stores become `Other`.
+Confirmed generic fixes and their regression tests are documented in `DEVELOPMENT_NOTES.md`; merchant-specific exceptions are prohibited.
 
-## Deduplication and redirects
+## Deduplication strategy
 
-Seeds are deduplicated by normalized registered domain. Distinct `*.myshopify.com` shops remain distinct until redirects identify their branded destinations. After crawling, the final redirected origin is preferred and records are deduplicated again, retaining the record with the strongest combined verification score. Redirect history remains in JSON/debug output.
+Candidate intake normalizes URLs and merges registered domains while retaining independent provenance rows. Distinct `*.myshopify.com` shops remain separate until redirect evidence identifies a branded destination. After crawling, the final redirected origin is preferred and accepted records are deduplicated again by canonical/registered domain, retaining the strongest verified record. This reduces 1,150 stored results to 1,143 public export rows.
 
-## Responsible crawling and caching
+## Crawling, robots.txt, and rate limiting
 
-The crawler uses connection reuse, a global semaphore, per-host locks, a configurable minimum delay between requests to the same hostname, exponential retry for transport failures/429/5xx, numeric `Retry-After`, response-size protection, HTML-only processing, and a transparent user agent. It checks `robots.txt`, follows redirects, and fetches no more than approximately five ranked pages per store. Unrelated hosts can proceed concurrently.
+The crawler uses one reusable `httpx.AsyncClient`, a global concurrency semaphore, per-host locks, a configurable host delay, bounded exponential retries, `Retry-After` handling, redirect tracking, content-type checks, and a 5 MB response limit. It fetches a homepage plus at most four ranked contact/about/policy pages by default.
 
-Successful bounded HTML responses are compressed in SQLite and reused for `CACHE_TTL_HOURS` (24 by default). Use `--no-cache` when a genuinely fresh batch is needed. The cache does not bypass robots evaluation and does not store oversized responses.
+Network cache misses check `robots.txt` before fetching. A disallowed URL is not bypassed. Fresh cached responses may be analyzed locally without a new network or robots request because no fetch occurs. Persistent DNS, TLS, timeout, 429, 5xx, and robots outcomes are bounded by the candidate attempt budget and retained as explicit failure reasons rather than being mislabeled as verification rejects.
 
-## Installation
+Final bounded failures were:
+
+| Reason | Count |
+|---|---:|
+| `ROBOTS_BLOCKED` | 76 |
+| `DNS_ERROR` | 63 |
+| `SSL_ERROR` | 29 |
+| `OTHER_TRANSIENT` | 17 |
+| `TIMEOUT` | 3 |
+| `HTTP_5XX` | 3 |
+| `HTTP_429` | 1 |
+
+## Final missing-field statistics
+
+These counts come from the 1,143-row final export and `data/output/missing_fields.md`:
+
+| Field | Missing count | Missing % |
+|---|---:|---:|
+| Domain URL | 0 | 0.0% |
+| Any contact | 7 | 0.6% |
+| Email | 41 | 3.6% |
+| Phone | 71 | 6.2% |
+| Socials | 215 | 18.8% |
+| Category | 0 | 0.0% |
+| Description | 23 | 2.0% |
+| Logo | 34 | 3.0% |
+| State | 110 | 9.6% |
+
+## Audit methodology and observed results
+
+### Automated audit
+
+The final machine pre-review audited all 1,150 stored accepted results from the fresh policy-compliant cache. It recomputed Shopify, India, logo, state, contacts, and socials verdicts without filling manual fields.
+
+| Check | PASS | FAIL | UNCERTAIN | MISSING |
+|---|---:|---:|---:|---:|
+| Shopify | 1,147 | 0 | 3 | 0 |
+| India | 1,142 | 0 | 8 | 0 |
+| Logo | 1,113 | 1 | 2 | 34 |
+| State | 1,038 | 0 | 3 | 109 |
+| Contacts | 1,140 | 0 | 10 | 0 |
+| Socials | 930 | 0 | 3 | 217 |
+
+Overall machine confidence was 1,134 HIGH, 12 MEDIUM, and 4 LOW. These are automated evidence checks, not human precision measurements.
+
+### Manual precision and human review
+
+The earlier clean pilot review covered all 24 accepted pilot stores and recorded reviewer-entered Shopify and India correctness of 24/24, logo 23/23 rated, state 22/22 rated, and contacts 23/23 rated. Missing/unrated values were excluded rather than treated as successes. This small early cohort is reported only as a pilot result.
+
+The final reviewed worksheet contains 25 deliberately targeted edge cases: all 4 LOW, all 12 MEDIUM, and 9 HIGH records selected for low scores, missing fields, unusual contacts/socials, and control coverage. Its reviewer-entered worksheet results were Shopify 19/25 (76%), India 18/25 (72%), logo 20/25 (80%), state 14/25 (56%), and contacts 20/25 (80%). Because the sample intentionally oversampled uncertain and problematic records, these figures **must not be interpreted as random dataset-wide precision**. No precision figure is fabricated for unreviewed rows.
+
+Relevant artifacts:
+
+- `data/audits/auto_audit_20260926T163940Z.csv`
+- `data/audits/auto_audit_20260926T082022Z_reviewed.csv`
+- `data/audits/targeted_accepted_audit_20260926T174909Z_reviewed.csv`
+
+## Installation and setup
 
 Python 3.11 or newer is required.
 
 ```bash
+git clone <repository-url>
 cd rivyou-shopify-discovery
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-For a real deployment, change the contact address in `USER_AGENT` to an actively monitored address.
+Runtime configuration is environment-driven. The defaults include Shopify and India thresholds of 4, concurrency 10, request timeout 15 seconds, five pages per store, a one-second per-host delay, three HTTP attempts, three candidate attempts, and a 24-hour cache TTL. For real use, replace the example user-agent contact with a monitored address.
 
-## Phase 1 file-based usage
+## Exact run commands
 
-Place candidate URLs in `data/seeds.csv`:
-
-```csv
-domain_url
-https://candidate.example
-another-candidate.in
-```
-
-Run enrichment:
-
-```bash
-python scripts/run_pipeline.py --input data/seeds.csv --output data/output --limit 20
-```
-
-Optional flags are `--concurrency`, `--limit`, and `--verbose`. Environment values include `REQUEST_TIMEOUT`, `MAX_CONCURRENCY`, `MAX_PAGES_PER_SITE`, `USER_AGENT`, `SHOPIFY_SCORE_THRESHOLD`, `INDIA_SCORE_THRESHOLD`, `RETRY_COUNT`, `MAX_RESPONSE_BYTES`, `PER_HOST_DELAY_SECONDS`, `CACHE_TTL_HOURS`, `PREFILTER_SCORE_THRESHOLD`, and `DATABASE_PATH`.
-
-Validate generated output:
-
-```bash
-python scripts/validate_output.py data/output/indian_shopify_stores.csv
-```
-
-## Candidate intake and controlled runs
-
-Initialize the database and ingest a generic domain list:
-
-```bash
-python scripts/discover_candidates.py \
-  --source csv \
-  --file data/discovery/candidates_master.csv
-```
-
-The command prints rows read, valid domains, new domains, already-existing domains, invalid rows, and within-run duplicates. It never resets an existing candidate status.
-
-To ingest every CSV dropped into the import directory:
+Ingest provenance-bearing import files without resetting history:
 
 ```bash
 python scripts/discover_candidates.py \
   --source directory \
-  --directory data/discovery/imports
+  --directory data/discovery/imports/final_wave
 ```
 
-Generate the reusable manual-search worksheet:
+Process bounded stages and retries:
 
 ```bash
-python scripts/discover_candidates.py \
-  --source search \
-  --generate-queries \
-  --output data/discovery/generated_queries.csv
+python scripts/run_batch.py --status NEW --limit 100 --concurrency 10 --wave final-wave-stage-1
+python scripts/run_batch.py --status NEW --limit 250 --concurrency 10 --wave final-wave-stage-2
+python scripts/run_batch.py --status NEW --limit 250 --concurrency 10 --wave final-wave-stage-3
+python scripts/run_batch.py --status NEW --limit 1000 --concurrency 10 --wave final-wave-stage-4
+python scripts/run_batch.py --status RETRY --limit 2000 --concurrency 10 --wave final-wave-retry-1
+python scripts/run_batch.py --status RETRY --limit 2000 --concurrency 10 --wave final-wave-retry-2
 ```
 
-Paste collected results into `data/discovery/search_results.csv` using `query,result_url`, then ingest them:
-
-```bash
-python scripts/discover_candidates.py \
-  --source search-csv \
-  --file data/discovery/search_results.csv
-```
-
-Import an externally generated Common Crawl list, or explicitly query the public URL index:
-
-```bash
-python scripts/discover_candidates.py --source commoncrawl --file commoncrawl_domains.csv
-python scripts/discover_candidates.py --source commoncrawl --limit 1000
-```
-
-Finish the current queue without resetting accepted or rejected records. Retry the current retry set first, then process only remaining new candidates:
-
-```bash
-python scripts/run_batch.py --status RETRY --limit 100 --wave wave-1 --recover-stale 30
-python scripts/run_batch.py --status NEW --limit 100 --wave wave-1
-```
-
-For later waves, ingest only newly collected inputs, label the run, and keep batches bounded:
-
-```bash
-python scripts/run_batch.py --status NEW --limit 100 --concurrency 15 --wave wave-2
-```
-
-Regenerate every derived artifact after a batch:
+Regenerate final artifacts and reporting:
 
 ```bash
 python scripts/export_results.py --database data/state/rivyou.db --output data/output
-
 python scripts/diagnose_missing_fields.py \
   --output data/audits/missing_fields.csv \
   --markdown-output data/output/missing_fields.md
-
-python scripts/report_stats.py --json-output data/audits/latest_report.json
-
-python scripts/audit_results.py \
-  --accepted 30 \
-  --rejected-shopify 10 \
-  --rejected-india 10
-
-# After manually filling the audit columns:
-python scripts/evaluate_audit.py data/audits/audit_<timestamp>.csv
-
+python scripts/report_stats.py --json-output data/output/quality_report.json
 ```
 
-The audit worksheet's manual columns remain blank until a human reviews them. `evaluate_audit.py` continues to print `N/A` for every metric with no completed rating. The export command creates public assignment CSV/JSON files, `missing_fields.md`, and a separate `store_debug.json` containing scores, confidence, evidence, crawl history, and extraction errors.
-
-### Automated pre-review
-
-Run a machine pre-review of every currently accepted store:
+Run the final automated and targeted audits:
 
 ```bash
-python scripts/run_auto_audit.py \
-  --database data/state/rivyou.db \
-  --output data/audits
-```
-
-The command safely revisits the homepage and bounded important pages through the existing crawler/cache, compares current evidence with stored acceptance evidence, and writes `auto_audit_<timestamp>.csv`. It reports `PASS`, `FAIL`, `UNCERTAIN`, or `MISSING` separately for Shopify, India, logo, state, contacts, and socials, plus an overall `HIGH`, `MEDIUM`, or `LOW` machine confidence. Inaccessible sites are uncertain rather than false failures. INR, `.in`, or India-shipping language alone cannot produce an automated India pass.
-
-Create a fresh risk-targeted accepted-store worksheet from that output:
-
-```bash
+python scripts/run_auto_audit.py --concurrency 10 --store-timeout 60 --cache-only
 python scripts/create_targeted_audit.py \
-  data/audits/auto_audit_<timestamp>.csv \
-  --target 15 \
-  --output data/audits
+  data/audits/auto_audit_20260926T163940Z.csv \
+  --target 25 --review-all-limit 30 --output data/audits
+python scripts/evaluate_audit.py \
+  data/audits/targeted_accepted_audit_20260926T174909Z_reviewed.csv
 ```
 
-This deterministic sample prioritizes MEDIUM/LOW machine confidence, the lowest
-accepted Shopify and India scores, missing state/description/logo cases, and
-unusual contact/social results, then fills the target with seeded random HIGH
-rows. It labels each selection reason and keeps every `manual_*` field blank.
-
-This is a prioritization layer, not human verification. Every `manual_*` field in its output is deliberately blank. `HIGH` must never be converted automatically into a manual “yes”; human sampling is still required to measure precision.
-
-The Wave 1 human review covered all 24 accepted stores. Shopify and India correctness were each 24/24 (100%). Logo correctness was 23/23 among records with a logo, with one missing logo. State correctness was 22/22 among records with a state, with two missing states in the reviewed worksheet. Contact correctness was 23/23 among records with contacts, with one missing-contact row. These are reviewer-entered results from `data/audits/auto_audit_20260926T082022Z_reviewed.csv`, not machine-inferred ratings.
-
-After Wave 2, the 2026-09-26 automated pre-review audited all 126 accepted stores: 125 were `HIGH`, one was `MEDIUM`, and none were `LOW`. Shopify re-passed for 126/126; India passed for 125 with one uncertain live recheck; contacts passed for 126/126; 125 logos passed with one missing; 119 states passed with seven missing; and 100 stores had qualifying social profiles while 26 remained missing. This automated audit is only a prioritization layer. Its manual fields remain blank, as do the fields in the fresh 10-row stratified manual worksheet.
-
-Wave 3 expanded the live database to 525 candidates. Its full automated audit
-covered all 381 accepted result rows: 375 were `HIGH`, five `MEDIUM`, and one
-`LOW`; Shopify re-passed for 381/381 and India passed for 380 with one
-uncertain live recheck. The fresh targeted 15-row worksheet contains all six
-non-HIGH rows plus low-score, missing-field, unusual contact/social, and seeded
-random HIGH cases. The detailed check counts are in
-`data/audits/wave3_summary.md`; manual fields remain blank, so no Wave 3 human
-precision claim is made.
-
-Run the final artifact gate with the assignment target, or a smaller pilot target while iterating:
+Validate the submission:
 
 ```bash
+python scripts/validate_output.py
 python scripts/check_submission.py
-python scripts/check_submission.py --minimum-rows 1
-```
-
-## Scaling strategy
-
-A representative target funnel is:
-
-```text
-10,000 provenance-backed candidates
-  -> cheap cached homepage pre-filter
-  -> roughly 3,000 plausible Shopify sites
-  -> full Shopify verification
-  -> full India verification
-  -> extraction and final-domain deduplication
-  -> manual precision samples by outcome stratum
-  -> 1,000+ usable records only if evidence supports them
-```
-
-The exact conversion rates must come from real runs, not assumed figures. Persistent cache/state makes it safe to gather candidates incrementally and inspect rejection bands without lowering thresholds.
-
-Use these checkpoints:
-
-| Wave | Candidate target | Required decision checkpoint |
-|---|---:|---|
-| 1 | Current ~33 | Finish RETRY/NEW and complete the initial manual audit. |
-| 2 | 100 total | Audit at least 20 accepted, 5 Shopify rejections, and 5 India rejections. |
-| 3 | 500 total | Audit a random accepted sample and compare observed source/query yield. |
-| 4 | 2,000 total | Re-check field completeness and human-rated precision before continuing. |
-| 5 | As needed | Continue acquisition until about 1,000 clean accepted stores, without lowering thresholds. |
-
-Each `run_batch.py --wave ...` invocation persists the input count, prefilter passes, Shopify/India verified counts, all terminal/retry outcomes, acceptance percentage derivable from the counters, average scores, runtime, and domains/minute. `report_stats.py` reports observed acceptance and rejection rates by source, query family, and exact query. Low-yield sources are not deleted retroactively; the evidence only guides later acquisition.
-
-## Manual precision auditing
-
-`audit_results.py` independently samples accepted, Shopify-rejected, and India-rejected candidates. Its CSV includes stored scores/evidence and intentionally blank `manual_shopify_correct`, `manual_india_correct`, and `manual_notes` columns. Review results should guide signal improvements and identify false-positive/false-negative patterns; they should not be filled automatically by the pipeline.
-
-The Phase 3 worksheet also includes category, state, logo URL, emails, phones, socials, plus blank logo/state/contact correctness fields. `evaluate_audit.py` calculates precision only for cells explicitly marked yes/no (also accepting `correct`/`incorrect`, `pass`/`fail`, and boolean-like forms). Blank cells produce `N/A`, never an invented zero or success rate.
-
-## Observed final results
-
-The first three waves produced 525 unique candidates and 380 deduplicated accepted records. The final acquisition wave then collected 2,078 attributable public-search result rows across 28 CSV files in `data/discovery/imports/final_wave/`. All 2,078 rows were structurally valid; ingestion normalized them to 1,082 genuinely new candidates, 173 existing candidates, and 823 within-import duplicate observations. The raw total exceeded the planned 1,200–1,400 range because acquisition continued until the hard requirement of at least 1,000 new normalized domains was measured. Every row retains its exact query, result URL, source, location, and category hint.
-
-Final-wave processing used the unchanged Shopify and India score thresholds of 4. The required NEW stages and cumulative deduplicated export counts were:
-
-| Stage | Selected | Accepted | Shopify rejects | India rejects | Retry | Runtime | Cumulative unique export |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 100 | 82 | 5 | 3 | 10 | 229.45 s | 462 |
-| 2 | 250 | 191 | 28 | 4 | 27 | 430.59 s | 651 |
-| 3 | 250 | 191 | 20 | 21 | 18 | 406.17 s | 841 |
-| 4 remainder | 482 | 0 | 0 | 0 | 482 | 6.33 s | 841 |
-
-Stage 4 encountered an environment-wide DNS denial, so all 482 candidates were safely moved to `RETRY` rather than misclassified. The first bounded retry processed those candidates plus 55 earlier transient cases: 308 were accepted, 40 failed Shopify verification, 69 failed India verification, and 120 remained transient. The final bounded retry converted 119 repeated transport failures to `FAILED` and one candidate to `REJECTED_SHOPIFY`; it accepted no additional stores. Across final discovery and processing, measured pipeline runtime was 1,898.62 seconds (31 minutes 38.62 seconds). Human development, collection, and review time remains intentionally blank in `WORKLOG.md` until supplied by the person performing those activities.
-
-The final database has 1,607 candidates: 1,153 `ACCEPTED`, 130 `REJECTED_SHOPIFY`, 132 `REJECTED_INDIA`, and 192 `FAILED`. There are no `NEW`, `RETRY`, `QUEUED`, or `PROCESSING` candidates. Canonical registered-domain deduplication reduces the accepted rows to **1,143 unique public records**, exceeding the required 1,000 with a 143-record buffer.
-
-Current final-export completeness is:
-
-| Field | Missing |
-|---|---:|
-| Email | 3.6% |
-| Phone | 6.2% |
-| Any contact | 0.6% |
-| Social profile | 18.8% |
-| Category | 0.0% |
-| Description | 2.0% |
-| Logo | 3.0% |
-| State | 9.6% |
-
-Missing values are left blank rather than inferred. The reproducible lists are in `data/audits/missing_fields.csv` and `data/output/missing_fields.md`. The final failure reasons are retained explicitly: 76 `ROBOTS_BLOCKED`, 63 `DNS_ERROR`, 29 `SSL_ERROR`, 17 `OTHER_TRANSIENT`, three `TIMEOUT`, three `HTTP_5XX`, and one `HTTP_429`. The crawler did not bypass robots directives, disable TLS verification, or exceed the configured candidate attempt budget.
-
-The automated audit covers all 1,150 accepted result records (three accepted candidate aliases have no separate result row) and records Shopify, India, logo, state, contacts, and socials verdicts without filling any manual field. It produced 1,134 HIGH, 12 MEDIUM, and four LOW rows. Shopify recheck results were 1,147 PASS and three UNCERTAIN; India results were 1,142 PASS and eight UNCERTAIN, with no FAIL verdicts in either verification dimension. The final run used the fresh policy-compliant crawl cache; cache misses were recorded as unavailable rather than fetched or treated as passes.
-
-The 25-row targeted worksheet contains all four LOW and all 12 MEDIUM rows, plus lowest-score, missing-field, unusual-contact/social, and random HIGH-confidence cases. Its manual correctness cells remain blank, so `evaluate_audit.py` reports `N/A` until a human reviewer supplies ratings; no manual precision percentage is claimed.
-
-The observed failure patterns, generic fixes, and anonymized/static regression coverage are recorded in `DEVELOPMENT_NOTES.md`. Verification thresholds were not lowered during scale-up.
-
-## Extraction methodology and taxonomy
-
-- Contacts come from visible text, `mailto:`/`tel:`, and JSON-LD. They are normalized and deduplicated; example/test/noreply platform addresses and known placeholder phone sequences are removed.
-- Socials come from merchant anchors for Instagram, Facebook, X, LinkedIn, and YouTube. Share, intent, settings, login, platform-home, and Shopify-owned URLs are rejected.
-- Category uses a deterministic taxonomy: Women's Apparel, Men's Apparel, Fashion, Jewellery, Beauty & Skincare, Home Decor, Furniture, Food & Beverage, Footwear, Accessories, Electronics, Health & Wellness, Sports & Fitness, Kids & Baby, Pet Supplies, Stationery, and Other. Title/H1 evidence outweighs incidental navigation, followed by description and collection/navigation terms.
-- Description priority is meta description, OpenGraph, JSON-LD, homepage hero copy, then bounded About-page text. Nothing is generated.
-- Logo priority is Organization/Brand JSON-LD, semantic header/logo images, then OpenGraph only as a weak fallback. Favicons, app/payment/trust icons, and tiny assets are prohibited.
-- State prefers structured postal address or address/PIN context, then conservative city/state mapping. A city in customer reviews, stockist lists, or shipping copy is not promoted to the output state without business-address context.
-
-## Real edge cases and decisions
-
-- Indian brands on `.com` are accepted when address, PIN, GSTIN, or phone evidence passes; the pilot includes several.
-- A foreign brand merely selling or shipping to India is not accepted from INR or India-shipping language alone.
-- An Indian address on an international storefront is valid business evidence; international shipping does not negate it.
-- Custom Shopify domains are verified through theme/CDN/global signals, not their suffix.
-- `myshopify.com` candidates that redirect use the final branded domain. Multiple inputs converging on one registered final domain are deduplicated.
-- Marketplace, agency, or directory pages are not treated as merchant storefronts merely because they discuss Shopify; they must pass the same platform/store and Indian-business evidence path.
-- Stockist lists caused an early state ambiguity in the pilot. State output now prefers structured or address-context evidence rather than the first state name on a page.
-
-## What changes at larger scale
-
-At **10x** the pilot size, the current SQLite queue, cache, concurrency control, and batch recovery remain appropriate. Operational work shifts to expanding source diversity, reviewing rejection strata, retrying transient failures, and completing audits at each 100/500-candidate checkpoint.
-
-At **100x** the pilot size, search-result acquisition throughput, network bandwidth, third-party rate limits, Common Crawl coverage lag, SQLite write contention, cache size, robots traffic, and manual audit cost become material. The next engineering steps would be partitioned discovery inputs, scheduled batches, cache pruning, per-source precision monitoring, and selective JavaScript rendering only for a measured failure cohort—not a wholesale Playwright crawl. This repository is an assignment-scale pipeline, not a claim of production-scale infrastructure.
-
-With more time, the highest-value improvements would be PIN-prefix state resolution, richer structured-address parsing, image-dimension/content checks for ambiguous logos, better detection of script-rendered social profiles, and a manually labeled regression corpus from the audit sheets.
-
-## Output schema
-
-`data/output/indian_shopify_stores.csv` contains:
-
-| Column | Meaning |
-|---|---|
-| `domain_url` | Canonical HTTPS origin after redirects |
-| `contacts` | JSON string with `emails` and `phones` arrays |
-| `socials` | JSON string keyed by supported platform |
-| `category` | Rule-based assignment category |
-| `tagline_or_description` | Merchant-authored description, up to 500 characters |
-| `logo_url` | Best non-favicon brand-logo URL |
-| `state` | Normalized Indian state/union territory or empty |
-| `shopify_score`, `india_score` | Verification scores |
-| `shopify_confidence`, `india_confidence` | `LOW`, `MEDIUM`, or `HIGH` |
-
-`indian_shopify_stores.json` contains the same public fields while preserving contacts and socials as native arrays/dictionaries. `store_debug.json` contains verification evidence, confidence, crawled pages, redirects, and extraction errors. `missing_fields.md` is generated from the same final records and provides the README-ready missing-count table without guessing why optional values are absent.
-
-## Time tracking
-
-`WORKLOG.md` provides blank entries for actual approximate development, discovery/collection, and manual-audit time. Those human durations must be entered by the person who did the work. Only pipeline execution time is measured automatically in `pipeline_runs`; no historical hours are fabricated.
-
-## Testing
-
-Tests use static HTML and mocked HTTP responses rather than live merchants:
-
-```bash
 pytest -q
 ```
 
-They cover URL normalization, deduplication, strong and weak verification signals, address/GSTIN/phone extraction, social share-link rejection, logo priority/favicon rejection, and city-to-state mapping.
+## Output locations
 
-## Current limitations
+| Artifact | Path |
+|---|---|
+| Required CSV | `data/output/indian_shopify_stores.csv` |
+| Required JSON | `data/output/indian_shopify_stores.json` |
+| Internal evidence/debug export | `data/output/store_debug.json` |
+| Quality and yield report | `data/output/quality_report.json` |
+| Missing-field table | `data/output/missing_fields.md` |
+| Missing-row detail | `data/audits/missing_fields.csv` |
+| Final automated audit | `data/audits/auto_audit_20260926T163940Z.csv` |
+| Final targeted reviewed worksheet | `data/audits/targeted_accepted_audit_20260926T174909Z_reviewed.csv` |
 
-- Search result acquisition remains manual or API/export driven; the project does not scrape Google.
-- Common Crawl's public URL index cannot search arbitrary response-body fingerprints. WARC-derived lists must be imported.
-- Pure client-side sites may expose too little HTML. The abstraction allows a later Playwright fallback, but Playwright is not included now.
-- Some merchants block research crawlers or disallow pages through robots.txt; those candidates are rejected rather than bypassed.
-- State resolution is text/city based. PIN-prefix resolution and deeper address disambiguation are future improvements.
-- Rule-based category classification can be ambiguous for multi-category stores.
-- OpenGraph images are only a weak logo fallback and can occasionally be a campaign image; provenance is retained for future scoring improvements.
+CSV `contacts` and `socials` are serialized JSON objects; the JSON export preserves native arrays and dictionaries. Debug evidence is intentionally separate from the seven public assignment fields.
 
-## Recommended first real collection
+## Runtime and worklog
 
-Generate the search queries, execute the highest-priority Mumbai/Delhi/Bengaluru/Chennai/Hyderabad combinations through manual search or a policy-compliant free search interface, paste the first 100 result URLs with their exact query into `search_results.csv`, ingest them, then run a 25-candidate batch. Audit all acceptances plus a sample of both rejection groups before processing the remaining 75. This establishes real precision and failure rates before scaling discovery breadth.
+The final acquisition/processing wave recorded **1,898.62 seconds (31 minutes 38.62 seconds)** of measured discovery and batch runtime. Individual UTC run timestamps, throughput, score averages, and stage counters are stored in `pipeline_runs` and surfaced in the quality report. Automated audit wall time is not recorded as a pipeline-run metric and is therefore not estimated here.
+
+`WORKLOG.md` is the source for time spent. Human development, discovery/collection, and manual-review durations remain blank until supplied by the people who performed them; the README does not invent those hours.
+
+## Known limitations
+
+- Public search coverage is incomplete and ranking-dependent; this is a verified dataset, not an exhaustive census of Indian Shopify stores.
+- Static HTML can miss JavaScript-rendered contacts, social profiles, descriptions, or logos.
+- Rule-based category assignment is imperfect for multi-category merchants.
+- State extraction is conservative and can remain blank despite adequate country-level India evidence.
+- Logo checks use markup semantics and dimensions, not full visual brand recognition.
+- Websites change after collection; cached evidence is a time-bounded observation.
+- Robots blocks and persistent network/TLS failures remain failures rather than being bypassed.
+- The targeted 25-row human review is intentionally biased toward edge cases and cannot estimate dataset-wide precision.
+
+With more time, the highest-value improvements would be a randomly sampled final human audit, richer structured-address and PIN-prefix resolution, incremental automated-audit output, stronger contact-ownership checks, and visual logo comparison for ambiguous assets.
+
+## Scaling beyond this submission
+
+### At 10x scale
+
+The SQLite queue and bounded async crawler remain workable, but crawl-cache size, robots traffic, retry scheduling, query/source monitoring, audit CPU time, and manual-review throughput become operational bottlenecks. The next steps would be scheduled partitions, incremental audit output, cache pruning, per-source dashboards, and a labeled random audit alongside targeted review.
+
+### At 100x scale
+
+SQLite write contention, single-process parsing, storage growth, search acquisition throughput, third-party rate limits, DNS/TLS noise, and human audit cost become architectural constraints. A production design would use a distributed queue, separate fetch/parse workers, object storage for evidence, a relational analytics store, per-host distributed rate limiting, observability, and statistically designed audit sampling. JavaScript rendering should remain a selective fallback for a measured cohort rather than a default crawl mode.
+
+## Explicit assumptions and judgment calls
+
+- The accepted unit is a merchant storefront represented by its canonical final registered domain; aliases do not count twice.
+- Current page evidence is treated as observational, not permanent truth.
+- A strong phone or physical-address signal can establish Indian business presence for a `.com` store.
+- India shipping and INR are supporting evidence only, because international merchants can expose both.
+- Missing optional fields are valid output when no qualifying merchant-published value appears in the bounded pages.
+- Conservative blanks are preferred over inferred states, logos, contacts, or socials.
+- Automated confidence prioritizes review; it is not a substitute for human correctness labels.
+- The submission-ready claim depends on the production checker passing with at least 1,000 unique export rows.
+
+## Testing
+
+Tests use static HTML and mocked HTTP responses rather than live merchant availability. Coverage includes URL normalization, redirect/domain deduplication, strong and weak Shopify/India signals, address/PIN/GSTIN/phone handling, cache and robots behavior, contact/social filtering, category weighting, logo rejection, state mapping, audits, reporting, exports, and submission checks.
