@@ -31,3 +31,7 @@ Extraction and verification rules change only after a concrete real-record failu
 ## Phase 4 queue completion
 
 No new extractor or verifier rule was changed from the Phase 4 audit worksheet because its human correctness fields remain blank. Six inaccessible candidates consistently disallowed the crawler in `robots.txt`; this was handled operationally as `ROBOTS_BLOCKED`, not as evidence for a verifier rewrite.
+
+## Automated pre-review calibration
+
+The first machine-audit run treated any filename containing `WhatsApp` as an obvious social asset. A live record used a merchant logo exported with a `WhatsApp_Image...jpg` filename, while the markup independently identified it through the header logo class, merchant alt text, and non-tiny dimensions. The audit-only rule was narrowed to reject explicit social icon/button patterns instead of arbitrary exported filenames. The core logo extractor was not changed. Regression coverage is `tests/test_auto_audit.py::test_exported_whatsapp_named_header_image_can_be_a_logo`.

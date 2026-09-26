@@ -222,6 +222,22 @@ python scripts/evaluate_audit.py data/audits/audit_<timestamp>.csv
 
 The audit worksheet's manual columns remain blank until a human reviews them. `evaluate_audit.py` continues to print `N/A` for every metric with no completed rating. The export command creates public assignment CSV/JSON files, `missing_fields.md`, and a separate `store_debug.json` containing scores, confidence, evidence, crawl history, and extraction errors.
 
+### Automated pre-review
+
+Run a machine pre-review of every currently accepted store:
+
+```bash
+python scripts/run_auto_audit.py \
+  --database data/state/rivyou.db \
+  --output data/audits
+```
+
+The command safely revisits the homepage and bounded important pages through the existing crawler/cache, compares current evidence with stored acceptance evidence, and writes `auto_audit_<timestamp>.csv`. It reports `PASS`, `FAIL`, `UNCERTAIN`, or `MISSING` separately for Shopify, India, logo, state, contacts, and socials, plus an overall `HIGH`, `MEDIUM`, or `LOW` machine confidence. Inaccessible sites are uncertain rather than false failures. INR, `.in`, or India-shipping language alone cannot produce an automated India pass.
+
+This is a prioritization layer, not human verification. Every `manual_*` field in its output is deliberately blank. `HIGH` must never be converted automatically into a manual “yes”; human sampling is still required to measure precision.
+
+The 2026-09-26 run audited all 24 accepted stores: 24 were `HIGH`, none were `MEDIUM` or `LOW`, and no record met the CLI's priority-review criteria. All 24 re-passed Shopify, India, and contact checks. Twenty-three logos re-passed semantic checks and one remained legitimately missing; 19 states re-passed and five remained legitimately missing; 17 stores had confirmed merchant-page social profiles and seven remained legitimately missing. These are machine results only—manual precision remains `N/A` until a reviewer completes the blank fields.
+
 Run the final artifact gate with the assignment target, or a smaller pilot target while iterating:
 
 ```bash
