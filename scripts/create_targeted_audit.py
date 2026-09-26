@@ -19,8 +19,18 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="data/audits")
     parser.add_argument("--target", type=int, default=15)
     parser.add_argument("--seed", type=int, default=3)
+    parser.add_argument(
+        "--review-all-limit",
+        type=int,
+        default=30,
+        help="Include all LOW/MEDIUM rows when their combined count is at most this limit",
+    )
     args = parser.parse_args()
     path = create_targeted_accepted_sample(
-        args.auto_audit, args.output, target=args.target, seed=args.seed
+        args.auto_audit,
+        args.output,
+        target=args.target,
+        seed=args.seed,
+        review_all_limit=args.review_all_limit,
     )
     print(f"Targeted audit worksheet written to {path}")

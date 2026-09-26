@@ -153,6 +153,39 @@ def test_targeted_sample_covers_risks_and_keeps_manual_fields_blank(tmp_path):
     assert all(row["selection_reason"] for row in sampled)
 
 
+def test_targeted_sample_prioritizes_low_before_medium_when_uncertain_set_is_large(tmp_path):
+    rows = []
+    for index, confidence in enumerate(["MEDIUM"] * 8 + ["LOW"] * 4 + ["HIGH"] * 8):
+        rows.append({
+            "domain": f"https://brand{index}.in",
+            "pipeline_status": "ACCEPTED",
+            "shopify_score": "8",
+            "india_score": "8",
+            "auto_contacts_check": "PASS",
+            "auto_socials_check": "PASS",
+            "auto_audit_confidence": confidence,
+        })
+    source = tmp_path / "auto.csv"
+    with source.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    path = create_targeted_accepted_sample(
+        source, tmp_path, target=6, seed=7, review_all_limit=6
+    )
+    with path.open(newline="", encoding="utf-8") as handle:
+        sampled = list(csv.DictReader(handle))
+
+    assert len(sampled) == 6
+    sampled_domains = {row["domain"] for row in sampled}
+    assert {f"https://brand{index}.in" for index in range(8, 12)} <= sampled_domains
+    assert all(not row[column] for row in sampled for column in (
+        "manual_shopify_correct", "manual_india_correct", "manual_logo_correct",
+        "manual_state_correct", "manual_contacts_correct", "manual_notes",
+    ))
+
+
 @pytest.mark.asyncio
 async def test_full_auto_audit_processes_stores_concurrently(tmp_path, monkeypatch):
     store = SQLiteStore(tmp_path / "state.db")
@@ -184,3 +217,31 @@ async def test_full_auto_audit_processes_stores_concurrently(tmp_path, monkeypat
     summary = await run_auto_audit(store, tmp_path)
     assert summary.total == 4
     assert TrackingCrawler.maximum > 1
+
+
+@pytest.mark.asyncio
+async def test_full_auto_audit_records_store_timeout_as_low_confidence(tmp_path, monkeypatch):
+    store = SQLiteStore(tmp_path / "state.db")
+    store.save_store_result("https://slow.in", record(domain_url="https://slow.in"))
+
+    class SlowCrawler:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def crawl_store(self, domain):
+            await asyncio.sleep(1)
+            return [page("", url=domain, error="unreachable")]
+
+    monkeypatch.setattr("rivyou.audit.automated.AsyncCrawler", SlowCrawler)
+    summary = await run_auto_audit(store, tmp_path, store_timeout_seconds=0.01)
+    with summary.path.open(newline="", encoding="utf-8") as handle:
+        [audited] = list(csv.DictReader(handle))
+
+    assert audited["auto_audit_confidence"] == "LOW"
+    assert "auto-audit store timeout" in audited["auto_audit_notes"]

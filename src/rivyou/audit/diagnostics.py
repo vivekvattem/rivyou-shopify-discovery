@@ -8,6 +8,7 @@ from typing import Iterable
 
 from rivyou.models import StoreRecord
 from rivyou.storage.sqlite_store import SQLiteStore
+from rivyou.utils.dedupe import dedupe_records
 
 FIELDS = ("emails", "phones", "socials", "category", "description", "logo", "state")
 
@@ -32,7 +33,7 @@ def missing_fields_for_record(record) -> list[str]:
 
 
 def write_missing_fields_report(store: SQLiteStore, path: str | Path) -> dict[str, float]:
-    records = store.accepted_records()
+    records = dedupe_records(store.accepted_records())
     counts = {field: 0 for field in FIELDS}
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +56,7 @@ def write_missing_fields_report(store: SQLiteStore, path: str | Path) -> dict[st
 
 
 def render_missing_fields_markdown(records: Iterable[StoreRecord]) -> str:
-    rows = list(records)
+    rows = dedupe_records(records)
     total = len(rows)
     counts = {
         "Domain": sum(not item.domain_url for item in rows),

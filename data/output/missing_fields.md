@@ -1,18 +1,18 @@
 # Final export completeness
 
-Based on 380 exported records.
+Based on 1143 exported records.
 
 | Field | Missing count | Missing % |
 |---|---:|---:|
 | Domain | 0 | 0.0% |
-| Contacts | 4 | 1.1% |
-| Email | 13 | 3.4% |
-| Phone | 26 | 6.8% |
-| Socials | 82 | 21.6% |
+| Contacts | 7 | 0.6% |
+| Email | 41 | 3.6% |
+| Phone | 71 | 6.2% |
+| Socials | 215 | 18.8% |
 | Category | 0 | 0.0% |
-| Description | 10 | 2.6% |
-| Logo | 12 | 3.2% |
-| State | 30 | 7.9% |
+| Description | 23 | 2.0% |
+| Logo | 34 | 3.0% |
+| State | 110 | 9.6% |
 
 An empty optional field means no qualifying value was found in the bounded static pages; values are not guessed.
 Phone and social rows count only normalized telephone numbers and validated merchant-profile URLs respectively.

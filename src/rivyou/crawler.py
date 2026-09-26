@@ -84,10 +84,12 @@ class AsyncCrawler:
         transport: httpx.AsyncBaseTransport | None = None,
         cache: CacheAdapter | None = None,
         use_cache: bool = True,
+        cache_only: bool = False,
     ):
         self.settings = settings
         self.cache = cache
         self.use_cache = use_cache
+        self.cache_only = cache_only
         self._semaphore = asyncio.Semaphore(settings.max_concurrency)
         self._client = httpx.AsyncClient(
             follow_redirects=True,
@@ -180,8 +182,9 @@ class AsyncCrawler:
     async def fetch(
         self, url: str, *, check_robots: bool = True, accepted_content_types: tuple[str, ...] = ("html",)
     ) -> CrawledPage:
-        if check_robots and not await self.allowed(url):
-            return CrawledPage(url, url, 0, "", error="blocked by robots.txt")
+        # A fresh cache hit is local analysis, not a network fetch.  Resolve it
+        # before robots so audits do not contact every host merely to reuse a
+        # response that was originally obtained through this policy-aware path.
         if self.cache and self.use_cache and (cached := self.cache.get(url)):
             if not any(value in cached.content_type.lower() for value in accepted_content_types):
                 return CrawledPage(
@@ -193,6 +196,10 @@ class AsyncCrawler:
             return CrawledPage(
                 url, cached.final_url, cached.status_code, html, cached.headers, [], None, True
             )
+        if self.cache_only:
+            return CrawledPage(url, url, 0, "", error="cache miss in cache-only mode")
+        if check_robots and not await self.allowed(url):
+            return CrawledPage(url, url, 0, "", error="blocked by robots.txt")
         try:
             return await self._fetch_with_retry(url, accepted_content_types)
         except (httpx.HTTPError, RetryableHTTPError) as exc:

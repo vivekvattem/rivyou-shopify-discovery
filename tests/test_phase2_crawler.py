@@ -43,6 +43,40 @@ async def test_cache_hit_avoids_second_network_request(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_fresh_cache_hit_does_not_make_a_robots_request(tmp_path):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected network request: {request.url}")
+
+    settings = SETTINGS.with_overrides(retry_count=1)
+    cache = SQLiteHTTPCache(SQLiteStore(tmp_path / "cache.db"), 24)
+    cache.set("https://brand.in", "https://brand.in", 200, "text/html", b"<html>cached</html>", {})
+    async with AsyncCrawler(settings, transport=httpx.MockTransport(handler), cache=cache) as crawler:
+        page = await crawler.fetch("https://brand.in")
+
+    assert page.from_cache
+    assert page.html == "<html>cached</html>"
+
+
+@pytest.mark.asyncio
+async def test_cache_only_miss_is_unavailable_without_network_request(tmp_path):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected network request: {request.url}")
+
+    settings = SETTINGS.with_overrides(retry_count=1)
+    cache = SQLiteHTTPCache(SQLiteStore(tmp_path / "cache.db"), 24)
+    async with AsyncCrawler(
+        settings,
+        transport=httpx.MockTransport(handler),
+        cache=cache,
+        cache_only=True,
+    ) as crawler:
+        page = await crawler.fetch("https://missing.in")
+
+    assert not page.html
+    assert page.error == "cache miss in cache-only mode"
+
+
+@pytest.mark.asyncio
 async def test_cache_can_be_bypassed(tmp_path):
     calls = 0
 

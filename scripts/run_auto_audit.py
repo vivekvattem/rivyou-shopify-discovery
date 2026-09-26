@@ -21,14 +21,30 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--database", default=SETTINGS.database_path)
     parser.add_argument("--output", default="data/audits")
     parser.add_argument("--concurrency", type=int, default=SETTINGS.max_concurrency)
+    parser.add_argument(
+        "--store-timeout",
+        type=float,
+        default=60.0,
+        help="Maximum seconds for one store audit after it acquires a worker slot",
+    )
     parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Audit fresh cached pages only; record cache misses as unavailable without network access",
+    )
     return parser.parse_args()
 
 
 async def main(args: argparse.Namespace) -> None:
     settings = SETTINGS.with_overrides(max_concurrency=args.concurrency)
     summary = await run_auto_audit(
-        SQLiteStore(args.database), args.output, settings=settings, use_cache=not args.no_cache
+        SQLiteStore(args.database),
+        args.output,
+        settings=settings,
+        use_cache=not args.no_cache,
+        store_timeout_seconds=args.store_timeout,
+        cache_only=args.cache_only,
     )
     print(f"Auto audit CSV: {summary.path}")
     print(f"total accepted stores: {summary.total}")

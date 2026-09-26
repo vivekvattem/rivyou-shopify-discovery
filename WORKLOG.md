@@ -6,7 +6,7 @@ Use this file for approximate human time only. Historical development or review 
 |---|---:|---|
 | Development time | _enter manually_ | Include implementation and debugging time. |
 | Discovery/collection time | _enter manually_ | Include search and candidate curation time. |
-| Pipeline execution time | See `pipeline_runs.total_seconds` | Automatically measured for each discovery/batch run. |
+| Pipeline execution time | Final wave: 31m 38.62s | Automatically measured discovery and batch runtime; per-run values remain in `pipeline_runs.total_seconds`. |
 | Manual audit time | _enter manually_ | Include worksheet review time. |
 
 To print recorded execution runs:

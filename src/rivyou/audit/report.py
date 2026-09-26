@@ -21,15 +21,20 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
 
     def with_rates(row: dict[str, Any]) -> dict[str, Any]:
         candidates = row["candidates"]
+        acceptance_rate = round(100 * row["accepted"] / candidates, 1) if candidates else 0.0
         return {
             **row,
-            "acceptance_rate": round(100 * row["accepted"] / candidates, 1) if candidates else 0.0,
+            "acceptance_rate": acceptance_rate,
             "shopify_rejection_rate": round(100 * row["rejected_shopify"] / candidates, 1) if candidates else 0.0,
             "india_rejection_rate": round(100 * row["rejected_india"] / candidates, 1) if candidates else 0.0,
             "failure_rate": round(100 * row["failed"] / candidates, 1) if candidates else 0.0,
+            "sample_size_label": (
+                "high_volume" if candidates >= 30 else "meaningful" if candidates >= 10 else "tiny"
+            ),
+            "high_volume_high_yield": candidates >= 30 and acceptance_rate >= 75.0,
         }
 
-    sources = store.source_stats()
+    sources = [with_rates(row) for row in store.source_stats()]
     query_families = []
     for row in store.query_family_stats():
         location = row["location"]
@@ -38,6 +43,16 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
             location = quoted[0] if quoted else location
         family = "/".join(filter(None, (row["source"], row["signal"], location)))
         query_families.append(with_rates({**row, "location": location, "query_family": family or row["source"]}))
+    query_quality = [with_rates(row) for row in store.query_stats()]
+    location_quality = [with_rates(row) for row in store.location_stats()]
+    category_hint_quality = [with_rates(row) for row in store.category_hint_stats()]
+    quality_sets = {
+        "sources": sources,
+        "query_families": query_families,
+        "exact_queries": query_quality,
+        "locations": location_quality,
+        "category_hints": category_hint_quality,
+    }
     return {
         "total_candidates": sum(counts.values()),
         "status_counts": {status.value: counts.get(status.value, 0) for status in CandidateStatus},
@@ -46,11 +61,15 @@ def build_report(store: SQLiteStore) -> dict[str, Any]:
             "accepted": counts.get(CandidateStatus.ACCEPTED.value, 0),
             "usable_final_records": total,
         },
-        "top_discovery_sources": [with_rates(row) for row in sources],
+        "top_discovery_sources": sources,
         "query_family_quality": query_families,
-        "query_quality": [with_rates(row) for row in store.query_stats()],
-        "location_quality": [with_rates(row) for row in store.location_stats()],
-        "category_hint_quality": [with_rates(row) for row in store.category_hint_stats()],
+        "query_quality": query_quality,
+        "location_quality": location_quality,
+        "category_hint_quality": category_hint_quality,
+        "high_volume_high_yield_highlights": {
+            name: [row for row in rows if row["high_volume_high_yield"]]
+            for name, rows in quality_sets.items()
+        },
         "retry_reason_counts": store.retry_reason_counts(),
         "shopify_rejection_rate": round(100 * counts.get("REJECTED_SHOPIFY", 0) / sum(counts.values()), 1) if counts else 0.0,
         "india_rejection_rate": round(100 * counts.get("REJECTED_INDIA", 0) / sum(counts.values()), 1) if counts else 0.0,

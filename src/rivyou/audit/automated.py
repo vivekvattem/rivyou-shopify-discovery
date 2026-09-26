@@ -261,12 +261,32 @@ async def run_auto_audit(
     *,
     settings: Settings = SETTINGS,
     use_cache: bool = True,
+    store_timeout_seconds: float | None = None,
+    cache_only: bool = False,
 ) -> AutoAuditSummary:
     records = store.accepted_records()
     cache = SQLiteHTTPCache(store, settings.cache_ttl_hours)
-    async with AsyncCrawler(settings, cache=cache, use_cache=use_cache) as crawler:
+    audit_slots = asyncio.Semaphore(settings.max_concurrency)
+    store_timeout = store_timeout_seconds or max(
+        60.0, settings.request_timeout * settings.retry_count + 5.0
+    )
+    async with AsyncCrawler(
+        settings, cache=cache, use_cache=use_cache, cache_only=cache_only
+    ) as crawler:
         async def audit_one(record: StoreRecord) -> dict[str, object]:
-            pages = await crawler.crawl_store(record.domain_url)
+            async with audit_slots:
+                try:
+                    pages = await asyncio.wait_for(
+                        crawler.crawl_store(record.domain_url), timeout=store_timeout
+                    )
+                except TimeoutError:
+                    pages = [CrawledPage(
+                        record.domain_url,
+                        record.domain_url,
+                        0,
+                        "",
+                        error=f"auto-audit store timeout after {store_timeout:g}s",
+                    )]
             return audit_record(record, pages)
 
         rows = list(await asyncio.gather(*(audit_one(record) for record in records)))

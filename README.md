@@ -305,45 +305,43 @@ Each `run_batch.py --wave ...` invocation persists the input count, prefilter pa
 
 The Phase 3 worksheet also includes category, state, logo URL, emails, phones, socials, plus blank logo/state/contact correctness fields. `evaluate_audit.py` calculates precision only for cells explicitly marked yes/no (also accepting `correct`/`incorrect`, `pass`/`fail`, and boolean-like forms). Blank cells produce `N/A`, never an invented zero or success rate.
 
-## Observed real pilot results
+## Observed final results
 
-Wave 1 began with 33 real merchant candidates curated from attributable public search results using exact `"Powered by Shopify" + Indian location` queries. Wave 2 added 148 real result rows across six location-separated import files: 148 were valid, 144 were unique within the import, 133 were new to the database, 11 already existed, four were within-import duplicates, and none were invalid. Wave 3 added 775 attributable rows across 13 import files; 409 registered domains were unique within those inputs, 359 were genuinely new, 50 already existed, and 366 were duplicate observations. The larger raw count was necessary because the first 514 rows yielded only 247 new domains, below the hard 350-new-domain checkpoint. The live database now contains 525 unique candidates without a reset.
+The first three waves produced 525 unique candidates and 380 deduplicated accepted records. The final acquisition wave then collected 2,078 attributable public-search result rows across 28 CSV files in `data/discovery/imports/final_wave/`. All 2,078 rows were structurally valid; ingestion normalized them to 1,082 genuinely new candidates, 173 existing candidates, and 823 within-import duplicate observations. The raw total exceeded the planned 1,200–1,400 range because acquisition continued until the hard requirement of at least 1,000 new normalized domains was measured. Every row retains its exact query, result URL, source, location, and category hint.
 
-The first controlled batch processed the highest-priority 25 candidates:
+Final-wave processing used the unchanged Shopify and India score thresholds of 4. The required NEW stages and cumulative deduplicated export counts were:
 
-| Metric | Observed value |
-|---|---:|
-| Accepted | 18 |
-| Rejected by Shopify pre-filter/verification | 1 |
-| Rejected by India verification | 3 |
-| Retryable site/network outcomes | 3 |
-| Hard failures | 0 |
-| Verification/enrichment runtime | 63.36 seconds |
-| Processing throughput | 23.67 domains/minute |
-| Acceptance throughput | 17.05 stores/minute |
+| Stage | Selected | Accepted | Shopify rejects | India rejects | Retry | Runtime | Cumulative unique export |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 100 | 82 | 5 | 3 | 10 | 229.45 s | 462 |
+| 2 | 250 | 191 | 28 | 4 | 27 | 430.59 s | 651 |
+| 3 | 250 | 191 | 20 | 21 | 18 | 406.17 s | 841 |
+| 4 remainder | 482 | 0 | 0 | 0 | 482 | 6.33 s | 841 |
 
-Inspection found and fixed four concrete extraction/verification defects during Wave 1: placeholder merchant contacts, generic/share Facebook URLs, weak kidswear category weighting, and address PIN selection when an unrelated six-digit number appeared earlier in the page. Waves 2 and 3 did not change verification thresholds. Wave 2's staged real-network runs accepted 102 of 133 newly acquired domains. Wave 3 accepted 255 of 359 new domains (71.0%), rejected 32 on Shopify evidence and 30 on India evidence, and left 42 as bounded network failures. The database now has 381 accepted result rows, which final registered-domain deduplication reduces to 380 public records. Across all 525 candidates, 36 are rejected by Shopify verification, 35 by India verification, and 73 are `FAILED`. There are no `NEW`, `RETRY`, `QUEUED`, or `PROCESSING` candidates left. This is a 500-candidate checkpoint dataset, not the final 1,000-store submission.
+Stage 4 encountered an environment-wide DNS denial, so all 482 candidates were safely moved to `RETRY` rather than misclassified. The first bounded retry processed those candidates plus 55 earlier transient cases: 308 were accepted, 40 failed Shopify verification, 69 failed India verification, and 120 remained transient. The final bounded retry converted 119 repeated transport failures to `FAILED` and one candidate to `REJECTED_SHOPIFY`; it accepted no additional stores. Across final discovery and processing, measured pipeline runtime was 1,898.62 seconds (31 minutes 38.62 seconds). Human development, collection, and review time remains intentionally blank in `WORKLOG.md` until supplied by the person performing those activities.
 
-The observed failure patterns, generic fixes, and anonymized/static regression coverage are recorded in `DEVELOPMENT_NOTES.md`. No Phase 4 extractor rule was changed without a completed human rating.
+The final database has 1,607 candidates: 1,153 `ACCEPTED`, 130 `REJECTED_SHOPIFY`, 132 `REJECTED_INDIA`, and 192 `FAILED`. There are no `NEW`, `RETRY`, `QUEUED`, or `PROCESSING` candidates. Canonical registered-domain deduplication reduces the accepted rows to **1,143 unique public records**, exceeding the required 1,000 with a 143-record buffer.
 
-Current accepted-record completeness after those fixes:
+Current final-export completeness is:
 
 | Field | Missing |
 |---|---:|
-| Email | 3.4% |
-| Phone | 6.8% |
-| Any contact | 1.1% |
-| Social profile | 21.6% |
+| Email | 3.6% |
+| Phone | 6.2% |
+| Any contact | 0.6% |
+| Social profile | 18.8% |
 | Category | 0.0% |
-| Description | 2.6% |
-| Logo | 3.2% |
-| State | 7.9% |
+| Description | 2.0% |
+| Logo | 3.0% |
+| State | 9.6% |
 
-The missing-field rows are reproducibly listed in `data/audits/missing_fields.csv`, and `data/output/missing_fields.md` is generated directly from the 380-record export. Eighty-two stores have no qualifying social-profile anchor in the fetched static pages; share/settings URLs are deliberately discarded. Twenty-six expose no validated phone, 13 expose no validated email, and four have neither contact type in the bounded pages. Twelve stores have no image that passes the non-favicon logo rules. Thirty provide enough independent India evidence to pass but no sufficiently contextual business state; the system retains an empty value rather than copying a customer, stockist, or shipping location. These are observed missing-value conditions, not claims that the merchants publish no such data elsewhere.
+Missing values are left blank rather than inferred. The reproducible lists are in `data/audits/missing_fields.csv` and `data/output/missing_fields.md`. The final failure reasons are retained explicitly: 76 `ROBOTS_BLOCKED`, 63 `DNS_ERROR`, 29 `SSL_ERROR`, 17 `OTHER_TRANSIENT`, three `TIMEOUT`, three `HTTP_5XX`, and one `HTTP_429`. The crawler did not bypass robots directives, disable TLS verification, or exceed the configured candidate attempt budget.
 
-Wave 1 manual precision is recorded above. Wave 2's stratified worksheet and Wave 3's fresh targeted worksheet remain **not yet reviewed** because their manual correctness cells are intentionally blank; no new precision percentage is claimed until a reviewer fills those cells and runs `evaluate_audit.py`.
+The automated audit covers all 1,150 accepted result records (three accepted candidate aliases have no separate result row) and records Shopify, India, logo, state, contacts, and socials verdicts without filling any manual field. It produced 1,134 HIGH, 12 MEDIUM, and four LOW rows. Shopify recheck results were 1,147 PASS and three UNCERTAIN; India results were 1,142 PASS and eight UNCERTAIN, with no FAIL verdicts in either verification dimension. The final run used the fresh policy-compliant crawl cache; cache misses were recorded as unavailable rather than fetched or treated as passes.
 
-Final failure reasons are retained explicitly: 46 `DNS_ERROR`, 19 `ROBOTS_BLOCKED`, seven `SSL_ERROR`, and one `TIMEOUT`. All 42 Wave 3 failures ended as `DNS_ERROR` during the last network pass. The crawler did not bypass robots directives, and no domain exceeded the configured attempt budget.
+The 25-row targeted worksheet contains all four LOW and all 12 MEDIUM rows, plus lowest-score, missing-field, unusual-contact/social, and random HIGH-confidence cases. Its manual correctness cells remain blank, so `evaluate_audit.py` reports `N/A` until a human reviewer supplies ratings; no manual precision percentage is claimed.
+
+The observed failure patterns, generic fixes, and anonymized/static regression coverage are recorded in `DEVELOPMENT_NOTES.md`. Verification thresholds were not lowered during scale-up.
 
 ## Extraction methodology and taxonomy
 

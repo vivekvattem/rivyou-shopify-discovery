@@ -108,6 +108,9 @@ def test_report_contains_funnel_and_source_rates(tmp_path):
     assert report["total_candidates"] == 1
     assert report["status_counts"]["NEW"] == 1
     assert report["top_discovery_sources"][0]["source"] == "test"
+    assert report["top_discovery_sources"][0]["sample_size_label"] == "tiny"
+    assert not report["top_discovery_sources"][0]["high_volume_high_yield"]
+    assert report["high_volume_high_yield_highlights"]["sources"] == []
     assert report["retry_reason_counts"] == {}
 
 

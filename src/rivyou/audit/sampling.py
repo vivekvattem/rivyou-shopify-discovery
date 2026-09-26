@@ -28,9 +28,14 @@ def create_targeted_accepted_sample(
     *,
     target: int = 15,
     seed: int = 3,
-    review_all_limit: int = 6,
+    review_all_limit: int = 30,
 ) -> Path:
-    """Select accepted stores that expose quality risk, then fill with random HIGH rows."""
+    """Select accepted stores that expose quality risk, then fill with random HIGH rows.
+
+    LOW-confidence rows are always considered first.  When the combined LOW and
+    MEDIUM set is small enough to review reasonably, include all of it; otherwise
+    use the available worksheet capacity for LOW rows before sampling MEDIUM rows.
+    """
     with Path(auto_audit_path).open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
 
@@ -52,13 +57,17 @@ def create_targeted_accepted_sample(
         except ValueError:
             return 0
 
-    uncertain = [row for row in rows if row.get("auto_audit_confidence") in {"MEDIUM", "LOW"}]
-    if len(uncertain) <= review_all_limit:
+    low = [row for row in rows if row.get("auto_audit_confidence") == "LOW"]
+    medium = [row for row in rows if row.get("auto_audit_confidence") == "MEDIUM"]
+    uncertain = [*low, *medium]
+    if len(uncertain) <= min(target, review_all_limit):
         for row in uncertain:
             add(row, f"all_{row['auto_audit_confidence'].lower()}_confidence")
     else:
-        for row in uncertain[:review_all_limit]:
-            add(row, f"sample_{row['auto_audit_confidence'].lower()}_confidence")
+        for row in low:
+            add(row, "sample_low_confidence")
+        for row in medium:
+            add(row, "sample_medium_confidence")
 
     for row in sorted(rows, key=lambda item: (score(item, "shopify_score"), item["domain"]))[:2]:
         add(row, "lowest_shopify_score")
